@@ -1,0 +1,12 @@
+{
+  "model": "gpt-5.6",
+  "max_repositories": 5,
+  "max_readme_characters": 12000,
+  "issue_prefix": "[Orion Learning]",
+  "queries": [
+    "AI agent durable execution human in the loop language:python",
+    "AI assistant long term memory retrieval language:python",
+    "AI agent safety guardrails evaluation language:python"
+  ]
+}
+
