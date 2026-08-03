@@ -12,7 +12,7 @@ from .settings import Settings
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run Orion's bounded autonomous learning cycle")
     parser.add_argument("--config", default=None, help="Path to Orion JSON configuration")
-    parser.add_argument("--dry-run", action="store_true", help="Discover sources without calling a model or creating an issue")
+    parser.add_argument("--dry-run", action="store_true", help="Discover sources and goals without calling a model or creating an issue")
     return parser.parse_args(argv)
 
 
@@ -20,7 +20,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     repository = os.getenv("GITHUB_REPOSITORY", "").strip()
     token = os.getenv("GITHUB_TOKEN", "").strip() or None
-    if not repository:
+    if not repository or "/" not in repository:
         print("GITHUB_REPOSITORY must be set to owner/name", file=sys.stderr)
         return 2
 
