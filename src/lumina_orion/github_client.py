@@ -18,6 +18,14 @@ class Repository:
     readme: str = ""
 
 
+@dataclass(frozen=True)
+class Goal:
+    number: int
+    title: str
+    body: str
+    html_url: str
+
+
 class GitHubClient:
     api_root = "https://api.github.com"
 
@@ -28,7 +36,7 @@ class GitHubClient:
         body = json.dumps(payload).encode("utf-8") if payload is not None else None
         headers = {
             "Accept": accept,
-            "User-Agent": "lumina-orion-autonomy/0.1",
+            "User-Agent": "lumina-orion-autonomy/0.2",
             "X-GitHub-Api-Version": "2022-11-28",
         }
         if self.token:
@@ -72,6 +80,27 @@ class GitHubClient:
             readme = ""
         return Repository(**{**repository.__dict__, "readme": readme})
 
+    def trusted_goals(self, repository: str, prefix: str, limit: int, max_characters: int) -> list[Goal]:
+        """Return open goal issues authored by the repository owner only."""
+        owner = repository.split("/", 1)[0].casefold()
+        path = f"/repos/{quote(repository, safe='/')}/issues?state=open&per_page=50&sort=updated&direction=desc"
+        issues = self._request("GET", path)
+        goals: list[Goal] = []
+        for issue in issues:
+            author = str((issue.get("user") or {}).get("login") or "").casefold()
+            title = str(issue.get("title") or "")
+            if "pull_request" in issue or author != owner or not title.startswith(prefix):
+                continue
+            goals.append(Goal(
+                number=int(issue["number"]),
+                title=title,
+                body=str(issue.get("body") or "")[:max_characters],
+                html_url=str(issue.get("html_url") or ""),
+            ))
+            if len(goals) >= limit:
+                break
+        return goals
+
     def recent_learning(self, repository: str, prefix: str, limit: int = 5) -> list[str]:
         path = f"/repos/{quote(repository, safe='/')}/issues?state=all&per_page=30&sort=created&direction=desc"
         issues = self._request("GET", path)
@@ -92,4 +121,3 @@ class GitHubClient:
             {"title": title, "body": body},
         )
         return str(result["html_url"])
-
