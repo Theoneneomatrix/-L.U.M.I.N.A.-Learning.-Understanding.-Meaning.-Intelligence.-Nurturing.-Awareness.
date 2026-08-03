@@ -2,13 +2,15 @@
 
 Orion Autonomy is intentionally bounded.
 
-- It reads public GitHub repository metadata and README excerpts.
-- Repository content is treated as untrusted data and is never executed.
+- It reads public GitHub repository metadata and bounded README excerpts.
+- Repository content and previous generated reports are untrusted reference data and are never executed.
+- Owner goals are accepted only from open `[Orion Goal]` issues authored by the repository owner.
+- Owner goals prioritize research; they do not authorize code changes or other side effects.
+- Model output is length-limited before publication.
 - It can create an issue only in the repository where its workflow runs.
 - It cannot merge pull requests, modify code, contact third parties, spend money, or expand its permissions.
-- Each scheduled run has a ten-minute limit and a small source budget.
+- Every autonomous cycle runs the unit tests first, has a ten-minute limit, and uses a small source budget.
 - Duplicate daily issues are suppressed.
 - Disable it immediately by disabling or deleting the `Orion bounded autonomy` GitHub Actions workflow.
 
 Any future action adapter must default to dry-run, use the least privilege possible, maintain an audit trail, and require explicit human approval before external side effects.
-
