@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "lumina-orion-autonomy"
-version = "0.1.0"
+version = "0.2.0"
 description = "A bounded, auditable autonomous learning loop for L.U.M.I.N.A."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -16,4 +16,3 @@ orion-autonomy = "lumina_orion.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
-
