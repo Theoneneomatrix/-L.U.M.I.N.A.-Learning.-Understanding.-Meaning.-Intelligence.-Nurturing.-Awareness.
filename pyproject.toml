@@ -1,0 +1,18 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "lumina-orion-autonomy"
+version = "0.2.0"
+description = "A bounded, auditable autonomous learning loop for L.U.M.I.N.A."
+readme = "README.md"
+requires-python = ">=3.11"
+license = {text = "MIT"}
+dependencies = ["openai>=2.0.0"]
+
+[project.scripts]
+orion-autonomy = "lumina_orion.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]

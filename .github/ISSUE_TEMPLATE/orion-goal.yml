@@ -1,0 +1,24 @@
+name: Orion learning goal
+description: Give Orion an owner-approved topic to prioritize during future learning cycles.
+title: "[Orion Goal] "
+body:
+  - type: textarea
+    id: question
+    attributes:
+      label: What should Orion explore?
+      description: Describe the question, comparison, or design topic you want prioritized.
+      placeholder: Compare safe long-term memory designs for L.U.M.I.N.A.
+    validations:
+      required: true
+  - type: textarea
+    id: boundaries
+    attributes:
+      label: Boundaries or preferences
+      description: Add sources to favor, risks to avoid, or a desired depth.
+  - type: checkboxes
+    id: acknowledgement
+    attributes:
+      label: Approval boundary
+      options:
+        - label: I understand this sets a research goal and does not approve code changes or external actions.
+          required: true

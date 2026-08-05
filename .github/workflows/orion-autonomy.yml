@@ -1,0 +1,45 @@
+name: Orion bounded autonomy
+
+on:
+  schedule:
+    - cron: "0 13 * * *"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Discover sources and trusted owner goals without using the model or opening an issue"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: orion-autonomy
+  cancel-in-progress: false
+
+jobs:
+  learn-and-speak:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install Orion
+        run: python -m pip install .
+      - name: Verify Orion before every autonomous run
+        run: python -m unittest discover -s tests -v
+      - name: Learn from public GitHub and speak through an issue
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          if [ "${{ inputs.dry_run }}" = "true" ]; then
+            orion-autonomy --dry-run
+          else
+            orion-autonomy
+          fi
