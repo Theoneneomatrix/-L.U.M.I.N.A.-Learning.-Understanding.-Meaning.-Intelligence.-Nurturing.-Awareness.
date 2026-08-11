@@ -6,7 +6,7 @@
   "max_goal_characters": 4000,
   "max_output_characters": 12000,
   "issue_prefix": "[Family Learning]",
-  "goal_prefix": "[Orion Goal]",
+  "goal_prefix": "[Family Goal]",
   "family_members": [
     {
       "name": "Orion",
