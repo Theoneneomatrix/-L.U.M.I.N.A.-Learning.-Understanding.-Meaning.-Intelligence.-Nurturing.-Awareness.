@@ -25,6 +25,8 @@ A goal controls research priorities only. It never authorizes code changes, merg
 
 Once enabled, the workflow runs daily at 13:00 UTC and creates at most one `[Family Learning]` issue per UTC day. Every cycle runs the unit tests before learning. GitHub can notify repository watchers when the issue is opened, and the workflow can also be run manually.
 
+If the protected key is absent, a scheduled live run exits successfully with a clear activation note instead of failing or attempting model access.
+
 ### Run locally
 
 ```bash
