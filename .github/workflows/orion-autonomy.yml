@@ -38,6 +38,11 @@ jobs:
           GITHUB_REPOSITORY: ${{ github.repository }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: |
+          if [ "${{ inputs.dry_run }}" != "true" ] && [ -z "$OPENAI_API_KEY" ]; then
+            echo "## Family council waiting for activation" >> "$GITHUB_STEP_SUMMARY"
+            echo "Add the protected OPENAI_API_KEY repository secret to enable live family learning." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
           if [ "${{ inputs.dry_run }}" = "true" ]; then
             orion-autonomy --dry-run
           else
