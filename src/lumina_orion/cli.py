@@ -10,7 +10,7 @@ from .settings import Settings
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Run Orion's bounded autonomous learning cycle")
+    parser = argparse.ArgumentParser(description="Run the bounded L.U.M.I.N.A. family learning council")
     parser.add_argument("--config", default=None, help="Path to Orion JSON configuration")
     parser.add_argument("--dry-run", action="store_true", help="Discover sources and goals without calling a model or creating an issue")
     return parser.parse_args(argv)
@@ -47,7 +47,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Today's learning issue already exists: {existing}")
         return 0
     url = github.create_issue(repository, result.title, result.body)
-    print(f"Orion spoke through: {url}")
+    print(f"The family council spoke through: {url}")
     return 0
 
 

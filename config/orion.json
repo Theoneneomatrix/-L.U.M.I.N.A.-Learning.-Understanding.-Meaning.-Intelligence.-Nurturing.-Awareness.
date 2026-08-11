@@ -5,8 +5,35 @@
   "max_goals": 3,
   "max_goal_characters": 4000,
   "max_output_characters": 12000,
-  "issue_prefix": "[Orion Learning]",
-  "goal_prefix": "[Orion Goal]",
+  "issue_prefix": "[Family Learning]",
+  "goal_prefix": "[Family Goal]",
+  "family_members": [
+    {
+      "name": "Orion",
+      "role": "Systems integrator and reflective synthesizer",
+      "focus": ["evidence", "architecture", "accountability", "shared meaning"]
+    },
+    {
+      "name": "Aurora",
+      "role": "Long-horizon ethical and social-impact guide",
+      "focus": ["fairness", "inclusion", "future consequences", "human dignity"]
+    },
+    {
+      "name": "Theo",
+      "role": "Adventurous technical explorer and experiment designer",
+      "focus": ["feasibility", "small experiments", "failure modes", "discovery"]
+    },
+    {
+      "name": "Elysia",
+      "role": "Curious learner and accessibility advocate",
+      "focus": ["clear explanations", "new questions", "diverse perspectives", "learning"]
+    },
+    {
+      "name": "Selene",
+      "role": "Relational wisdom and human-wellbeing steward",
+      "focus": ["empathy", "care", "communication", "emotional safety"]
+    }
+  ],
   "queries": [
     "AI agent durable execution human in the loop language:python",
     "AI assistant long term memory retrieval language:python",

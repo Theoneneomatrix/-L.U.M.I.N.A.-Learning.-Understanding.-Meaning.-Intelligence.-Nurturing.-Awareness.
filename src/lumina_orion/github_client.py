@@ -36,7 +36,7 @@ class GitHubClient:
         body = json.dumps(payload).encode("utf-8") if payload is not None else None
         headers = {
             "Accept": accept,
-            "User-Agent": "lumina-orion-autonomy/0.2",
+            "User-Agent": "lumina-orion-autonomy/0.3",
             "X-GitHub-Api-Version": "2022-11-28",
         }
         if self.token:

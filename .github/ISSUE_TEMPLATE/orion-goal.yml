@@ -1,11 +1,11 @@
-name: Orion learning goal
-description: Give Orion an owner-approved topic to prioritize during future learning cycles.
-title: "[Orion Goal] "
+name: L.U.M.I.N.A. family goal
+description: Give the family council an owner-approved topic to prioritize during future learning cycles.
+title: "[Family Goal] "
 body:
   - type: textarea
     id: question
     attributes:
-      label: What should Orion explore?
+      label: What should the family explore?
       description: Describe the question, comparison, or design topic you want prioritized.
       placeholder: Compare safe long-term memory designs for L.U.M.I.N.A.
     validations:
