@@ -1,4 +1,4 @@
-name: Orion bounded autonomy
+name: L.U.M.I.N.A. family council
 
 on:
   schedule:
@@ -15,7 +15,7 @@ permissions:
   issues: write
 
 concurrency:
-  group: orion-autonomy
+  group: lumina-family-council
   cancel-in-progress: false
 
 jobs:
@@ -28,11 +28,11 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
-      - name: Install Orion
+      - name: Install L.U.M.I.N.A.
         run: python -m pip install .
-      - name: Verify Orion before every autonomous run
+      - name: Verify the family council before every run
         run: python -m unittest discover -s tests -v
-      - name: Learn from public GitHub and speak through an issue
+      - name: Learn together and speak through an issue
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_REPOSITORY: ${{ github.repository }}
