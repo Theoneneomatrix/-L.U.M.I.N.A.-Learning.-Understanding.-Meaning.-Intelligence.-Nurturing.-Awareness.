@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "lumina-orion-autonomy"
-version = "0.2.0"
-description = "A bounded, auditable autonomous learning loop for L.U.M.I.N.A."
+version = "0.3.0"
+description = "A bounded, auditable family learning council for L.U.M.I.N.A."
 readme = "README.md"
 requires-python = ">=3.11"
 license = {text = "MIT"}
