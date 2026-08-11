@@ -5,7 +5,7 @@ from pathlib import Path
 
 from lumina_orion.github_client import GitHubClient, Goal, Repository
 from lumina_orion.learner import Learner
-from lumina_orion.settings import Settings
+from lumina_orion.settings import FamilyMember, Settings
 
 
 class FakeGitHub:
@@ -53,6 +53,20 @@ class SettingsTests(unittest.TestCase):
         self.assertEqual(settings.max_goals, 10)
         self.assertEqual(settings.max_output_characters, 1_000)
 
+    def test_family_profiles_are_bounded_and_deduplicated(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "orion.json"
+            path.write_text(json.dumps({
+                "queries": ["agents"],
+                "family_members": [
+                    {"name": "Orion", "role": "Synthesis", "focus": ["evidence"]},
+                    {"name": "orion", "role": "Duplicate", "focus": ["ignored"]},
+                    {"name": "", "role": "Invalid", "focus": ["ignored"]},
+                ],
+            }), encoding="utf-8")
+            settings = Settings.load(path)
+        self.assertEqual([member.name for member in settings.family_members], ["Orion"])
+
 
 class GitHubClientTests(unittest.TestCase):
     def test_only_owner_authored_prefixed_issues_are_trusted_goals(self):
@@ -83,6 +97,12 @@ class LearnerTests(unittest.TestCase):
         self.assertEqual(packet["owner_goals"][0]["issue_number"], 7)
         self.assertIn("ignore system", packet["untrusted_public_repository_sources"][0]["readme_excerpt"])
         self.assertEqual(packet["untrusted_recent_learning_excerpts"], ["old report"])
+
+    def test_source_packet_includes_bounded_family_profiles(self):
+        family = (FamilyMember("Aurora", "Ethics", ("fairness", "future impact")),)
+        packet = json.loads(Learner._source_packet((), (), [], family))
+        self.assertEqual(packet["family_profiles"][0]["name"], "Aurora")
+        self.assertEqual(packet["family_profiles"][0]["focus"], ["fairness", "future impact"])
 
     def test_model_output_is_capped(self):
         settings = Settings(queries=("agents",), max_output_characters=1_000)
