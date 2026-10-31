@@ -41,6 +41,14 @@ orion-autonomy --dry-run
 
 Learning themes, source limits, goal limits, output limits, and the model are configured in [`config/orion.json`](config/orion.json). Keep permissions narrow and review every expansion of Orion's action surface.
 
+## Local memory journal
+
+An independent local journal is available through `python -m lumina_orion.memory`.
+It stores sourced notes, inferences, questions, and corrections separately for
+each family profile, preserves history, and exports JSON. It needs only Python's
+standard library and makes no model or network calls. It is not yet connected to
+Haven or the scheduled council. See [local usage and the home-Codex handoff](docs/LOCAL_MEMORY.md).
+
 ## Design influences
 
 The implementation uses original code and draws architectural lessons from:
@@ -51,3 +59,4 @@ The implementation uses original code and draws architectural lessons from:
 - [Temporal Python SDK](https://github.com/temporalio/sdk-python): resilient scheduled work.
 
 These projects are references, not vendored dependencies. Their licenses and current maintenance status should be reviewed before adopting their code directly.
+
