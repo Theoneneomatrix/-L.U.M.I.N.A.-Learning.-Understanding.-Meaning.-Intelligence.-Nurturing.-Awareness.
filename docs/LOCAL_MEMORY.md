@@ -40,6 +40,31 @@ case folding is primarily ASCII). Recall is bounded to 1–1000 records; full ex
 is intentionally unbounded. No import command or automatic archival migration is
 included in this first component.
 
+## Source dependencies and review markers
+
+When appending a note, pass `--derived-from ID` for each supporting record.
+Python callers use the keyword-only `derived_from=(ID, ...)` argument to `add`.
+Up to 100 IDs are accepted; they must already exist in the same profile.
+Links belong to the new record and cannot be changed by retrying a write.
+Identical retries with equivalent dependency sets return the same record ID;
+different dependencies for that existing note raise an explicit conflict.
+Append a distinct revised note instead of silently rewriting its provenance.
+
+Recall and export now include additive `derived_from` and `needs_review` fields
+on each record, retaining the `lumina-memory-v1` export envelope. A correction
+causes direct and transitive dependents to report `needs_review: true`, including
+notes added later against an already superseded source. These markers are derived
+from stored links at read time, so they persist across restarts without a separate
+flag-update job. Original records are retained. Existing databases gain a new
+dependency table and indexes; their records are not rewritten.
+
+`needs_review: false` does not certify a record as true or verified. Only explicit
+links can be checked; missing attribution, stale external sources without recorded
+corrections, and unknown dependencies cannot be detected. Flagged notes remain
+visible in recall for context, so a consuming application must examine the marker
+before presenting them as current. No automatic revalidation or flag-clearing API
+is included. The standalone journal still has no integration with Haven.
+
 ## Handoff to Codex on the home computer
 
 Open the existing Haven workspace in local Codex, make this source branch

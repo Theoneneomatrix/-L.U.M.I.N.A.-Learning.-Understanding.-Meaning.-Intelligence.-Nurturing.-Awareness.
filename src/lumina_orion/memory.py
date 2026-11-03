@@ -34,6 +34,13 @@ class MemoryBank:
                 UNIQUE(profile, kind, text, source, supersedes)
             )""")
             db.execute("CREATE INDEX IF NOT EXISTS profile_history ON memories(profile, id)")
+            db.execute("""CREATE TABLE IF NOT EXISTS dependencies (
+                child_id INTEGER NOT NULL REFERENCES memories(id),
+                parent_id INTEGER NOT NULL REFERENCES memories(id),
+                PRIMARY KEY(child_id, parent_id),
+                CHECK(child_id != parent_id)
+            )""")
+            db.execute("CREATE INDEX IF NOT EXISTS dependency_children ON dependencies(parent_id, child_id)")
 
     @contextmanager
     def _connect(self):
@@ -54,7 +61,7 @@ class MemoryBank:
         return value
 
     def add(self, profile: str, kind: str, text: str, source: str,
-            supersedes: int | None = None) -> int:
+            supersedes: int | None = None, *, derived_from: tuple[int, ...] = ()) -> int:
         profile = self._profile(profile)
         text, source = text.strip(), source.strip()
         if kind not in KINDS or not text or not source:
@@ -63,6 +70,9 @@ class MemoryBank:
             raise ValueError("Text or source exceeds the journal size limit")
         if (kind == "correction") != (supersedes is not None):
             raise ValueError("Corrections must supersede a record; other kinds cannot")
+        if len(derived_from) > 100 or any(type(value) is not int or value <= 0 for value in derived_from):
+            raise ValueError("Supply at most 100 positive integer dependency IDs")
+        parents = tuple(sorted(set(derived_from)))
         with self._connect() as db:
             # Serialize duplicate checks and competing corrections across writers.
             db.execute("BEGIN IMMEDIATE")
@@ -72,7 +82,17 @@ class MemoryBank:
                 (profile, kind, text, source, supersedes),
             ).fetchone()
             if duplicate:
+                existing = tuple(row[0] for row in db.execute(
+                    "SELECT parent_id FROM dependencies WHERE child_id=? ORDER BY parent_id",
+                    (duplicate["id"],),
+                ))
+                if existing != parents:
+                    raise ValueError("Existing record has different dependencies; append a distinct record")
                 return duplicate["id"]
+            for parent_id in parents:
+                parent = db.execute("SELECT profile FROM memories WHERE id=?", (parent_id,)).fetchone()
+                if not parent or parent["profile"] != profile:
+                    raise ValueError("Dependencies must exist in the same profile")
             if supersedes is not None:
                 original = db.execute(
                     "SELECT profile FROM memories WHERE id=?", (supersedes,)
@@ -86,7 +106,38 @@ class MemoryBank:
                 "VALUES(?,?,?,?,?,?)",
                 (profile, kind, text, source, datetime.now(UTC).isoformat(), supersedes),
             )
-            return int(cursor.lastrowid)
+            record_id = int(cursor.lastrowid)
+            # Parents already exist; new-record-only edges cannot create cycles.
+            db.executemany("INSERT INTO dependencies(child_id,parent_id) VALUES(?,?)",
+                           ((record_id, parent_id) for parent_id in parents))
+            return record_id
+
+    @staticmethod
+    def _records(db: sqlite3.Connection, profile: str, suffix: str,
+                 parameters: tuple = ()) -> list[dict]:
+        # suffix is fixed internal SQL; all user input is bound as parameters.
+        rows = db.execute("""WITH RECURSIVE affected(id) AS (
+            SELECT d.child_id FROM dependencies d
+            JOIN memories child ON child.id=d.child_id
+            WHERE child.profile=? AND EXISTS (
+                SELECT 1 FROM memories c WHERE c.supersedes=d.parent_id AND c.profile=?
+            )
+            UNION
+            SELECT d.child_id FROM dependencies d JOIN affected a ON d.parent_id=a.id
+            JOIN memories child ON child.id=d.child_id WHERE child.profile=?
+        )
+        SELECT m.*, EXISTS(SELECT 1 FROM affected WHERE affected.id=m.id) AS needs_review,
+            (SELECT group_concat(parent_id) FROM dependencies WHERE child_id=m.id) AS dependency_ids
+        FROM memories m WHERE m.profile=? """ + suffix,
+            (profile, profile, profile, profile, *parameters)).fetchall()
+        records = []
+        for row in rows:
+            record = dict(row)
+            record["derived_from"] = sorted(int(value) for value in
+                                          (record.pop("dependency_ids") or "").split(",") if value)
+            record["needs_review"] = bool(record["needs_review"])
+            records.append(record)
+        return records
 
     def recall(self, profile: str, query: str = "", limit: int = 20,
                history: bool = False) -> list[dict]:
@@ -95,23 +146,18 @@ class MemoryBank:
             raise ValueError("Limit must be between 1 and 1000")
         # instr performs literal matching: '%' and '_' are not wildcards.
         with self._connect() as db:
-            rows = db.execute(
-                "SELECT m.* FROM memories m WHERE m.profile=? "
+            return self._records(db, profile,
                 "AND instr(lower(m.text), lower(?)) > 0 "
                 "AND (? OR NOT EXISTS (SELECT 1 FROM memories c WHERE c.supersedes=m.id)) "
                 "ORDER BY m.id DESC LIMIT ?",
-                (profile, query, history, limit),
-            ).fetchall()
-        return [dict(row) for row in rows]
+                (query, history, limit))
 
     def export(self, profile: str) -> dict:
         profile = self._profile(profile)
         with self._connect() as db:
-            rows = db.execute(
-                "SELECT * FROM memories WHERE profile=? ORDER BY id", (profile,)
-            ).fetchall()
+            records = self._records(db, profile, "ORDER BY m.id")
         return {"format": "lumina-memory-v1", "profile": profile,
-                "records": [dict(row) for row in rows]}
+                "records": records}
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -124,6 +170,8 @@ def main(argv: list[str] | None = None) -> int:
     add.add_argument("--text", required=True)
     add.add_argument("--source", required=True)
     add.add_argument("--supersedes", type=int)
+    add.add_argument("--derived-from", type=int, action="append", default=[],
+                     help="Supporting record ID; repeat for multiple sources (maximum 100)")
     recall = commands.add_parser("recall", help="Read current records for one profile")
     recall.add_argument("profile", choices=PROFILES)
     recall.add_argument("--query", default="")
@@ -135,7 +183,8 @@ def main(argv: list[str] | None = None) -> int:
     try:
         bank = MemoryBank(args.db)
         if args.command == "add":
-            result = {"id": bank.add(args.profile, args.kind, args.text, args.source, args.supersedes)}
+            result = {"id": bank.add(args.profile, args.kind, args.text, args.source,
+                                     args.supersedes, derived_from=tuple(args.derived_from))}
         elif args.command == "recall":
             result = bank.recall(args.profile, args.query, args.limit, args.history)
         else:
