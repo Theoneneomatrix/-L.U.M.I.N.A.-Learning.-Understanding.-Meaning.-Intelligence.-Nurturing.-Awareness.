@@ -2,7 +2,9 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
+import re
 import sqlite3
 from contextlib import contextmanager
 from datetime import UTC, datetime
@@ -10,6 +12,76 @@ from pathlib import Path
 
 PROFILES = ("orion", "aurora", "theo", "elysia", "selene")
 KINDS = ("source_note", "inference", "question", "correction")
+MANIFEST_LIMIT = 100000
+
+
+def _manifest_json(manifest: dict) -> str:
+    """Validate v1 inputs and encode them consistently within this Python API."""
+    def nonempty(value, limit):
+        return type(value) is str and bool(value.strip()) and len(value) <= limit
+
+    if type(manifest) is not dict or set(manifest) != {"version", "question", "sources", "processing"}:
+        raise ValueError("Manifest requires version, question, sources, and processing")
+    if type(manifest["version"]) is not int or manifest["version"] != 1:
+        raise ValueError("Only input manifest version 1 is supported")
+    if not nonempty(manifest["question"], 20000):
+        raise ValueError("Manifest question must be nonempty text, at most 20000 characters")
+    sources = manifest["sources"]
+    if type(sources) is not list or not 1 <= len(sources) <= 100:
+        raise ValueError("Manifest requires an ordered list of 1 to 100 sources")
+    for source in sources:
+        if (type(source) is not dict or set(source) != {"locator", "content_sha256"}
+                or not nonempty(source["locator"], 2000)
+                or type(source["content_sha256"]) is not str
+                or not re.fullmatch(r"[0-9a-f]{64}", source["content_sha256"])):
+            raise ValueError("Each source requires a locator and lowercase SHA-256 content digest")
+    processing = manifest["processing"]
+    if type(processing) is not dict or not nonempty(processing.get("pipeline"), 200):
+        raise ValueError("Processing requires a nonempty pipeline version, at most 200 characters")
+
+    remaining = 10000
+
+    def validate(value, depth=0):
+        nonlocal remaining
+        remaining -= 1
+        if depth > 20 or remaining < 0:
+            raise ValueError("Manifest exceeds nesting or element limit")
+        if type(value) is dict:
+            for key, item in value.items():
+                if type(key) is not str:
+                    raise ValueError("Manifest object keys must be strings")
+                validate(item, depth + 1)
+        elif type(value) is list:
+            for item in value:
+                validate(item, depth + 1)
+        elif type(value) not in (str, int, float, bool, type(None)):
+            raise ValueError("Manifest values must be JSON types")
+
+    validate(manifest)
+    encoded = json.dumps(manifest, sort_keys=True, separators=(",", ":"),
+                         ensure_ascii=False, allow_nan=False)
+    if len(encoded.encode("utf-8")) > MANIFEST_LIMIT:
+        raise ValueError("Manifest exceeds 100000 UTF-8 bytes")
+    return encoded
+
+
+def _load_manifest(path: str) -> dict:
+    def unique_keys(pairs):
+        result = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValueError("Manifest JSON contains a duplicate object key")
+            result[key] = value
+        return result
+
+    with open(path, "rb") as stream:
+        content = stream.read(MANIFEST_LIMIT + 1)
+    if len(content) > MANIFEST_LIMIT:
+        raise ValueError("Manifest file exceeds 100000 bytes")
+    try:
+        return json.loads(content.decode("utf-8"), object_pairs_hook=unique_keys)
+    except (UnicodeError, RecursionError) as error:
+        raise ValueError("Manifest must be bounded UTF-8 JSON") from error
 
 
 class MemoryBank:
@@ -41,6 +113,12 @@ class MemoryBank:
                 CHECK(child_id != parent_id)
             )""")
             db.execute("CREATE INDEX IF NOT EXISTS dependency_children ON dependencies(parent_id, child_id)")
+            db.execute("""CREATE TABLE IF NOT EXISTS research_results (
+                profile TEXT NOT NULL, run_id TEXT NOT NULL, step TEXT NOT NULL,
+                manifest_json TEXT NOT NULL, manifest_sha256 TEXT NOT NULL,
+                result_text TEXT NOT NULL, created_at TEXT NOT NULL,
+                PRIMARY KEY(profile, run_id, step)
+            )""")
 
     @contextmanager
     def _connect(self):
@@ -156,8 +234,56 @@ class MemoryBank:
         profile = self._profile(profile)
         with self._connect() as db:
             records = self._records(db, profile, "ORDER BY m.id")
+            results = [self._result(row) for row in db.execute(
+                "SELECT * FROM research_results WHERE profile=? ORDER BY run_id, step", (profile,))]
         return {"format": "lumina-memory-v1", "profile": profile,
-                "records": records}
+                "records": records, "results": results}
+
+    @staticmethod
+    def _result(row: sqlite3.Row) -> dict:
+        result = dict(row)
+        result["manifest"] = json.loads(result.pop("manifest_json"))
+        return result
+
+    def _result_inputs(self, profile: str, run_id: str, step: str, manifest: dict) -> tuple:
+        profile = self._profile(profile)
+        if any(type(value) is not str or not value.strip() or len(value) > 200
+               for value in (run_id, step)):
+            raise ValueError("Run ID and step must be nonempty text, at most 200 characters")
+        encoded = _manifest_json(manifest)
+        return profile, run_id, step, encoded, hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+    @staticmethod
+    def _matching_result(db: sqlite3.Connection, inputs: tuple) -> sqlite3.Row | None:
+        row = db.execute("SELECT * FROM research_results WHERE profile=? AND run_id=? AND step=?",
+                         inputs[:3]).fetchone()
+        if row and (row["manifest_json"], row["manifest_sha256"]) != inputs[3:]:
+            raise ValueError("Stored result has different inputs; use a new run ID or step")
+        return row
+
+    def save_result(self, profile: str, run_id: str, step: str,
+                    manifest: dict, result_text: str) -> dict:
+        """Commit once; identical retries return the original, conflicts never overwrite."""
+        inputs = self._result_inputs(profile, run_id, step, manifest)
+        if type(result_text) is not str or not result_text.strip() or len(result_text) > 20000:
+            raise ValueError("Result must be nonempty text, at most 20000 characters")
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            row = self._matching_result(db, inputs)
+            if row:
+                if row["result_text"] != result_text:
+                    raise ValueError("Stored result has different output; original retained")
+                return self._result(row)
+            db.execute("INSERT INTO research_results VALUES(?,?,?,?,?,?,?)",
+                       (*inputs, result_text, datetime.now(UTC).isoformat()))
+            return self._result(self._matching_result(db, inputs))
+
+    def reuse_result(self, profile: str, run_id: str, step: str, manifest: dict) -> dict | None:
+        """Return a saved result only for matching declared inputs; None means absent."""
+        inputs = self._result_inputs(profile, run_id, step, manifest)
+        with self._connect() as db:
+            row = self._matching_result(db, inputs)
+            return self._result(row) if row else None
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -179,6 +305,14 @@ def main(argv: list[str] | None = None) -> int:
     recall.add_argument("--history", action="store_true")
     export = commands.add_parser("export", help="Write the complete profile history as JSON to stdout")
     export.add_argument("profile", choices=PROFILES)
+    for name in ("save-result", "reuse-result"):
+        command = commands.add_parser(name, help="Save or check a result against declared inputs")
+        command.add_argument("profile", choices=PROFILES)
+        command.add_argument("run_id")
+        command.add_argument("step")
+        command.add_argument("--manifest", required=True, help="Local UTF-8 JSON input manifest")
+        if name == "save-result":
+            command.add_argument("--result", required=True)
     args = parser.parse_args(argv)
     try:
         bank = MemoryBank(args.db)
@@ -187,9 +321,15 @@ def main(argv: list[str] | None = None) -> int:
                                      args.supersedes, derived_from=tuple(args.derived_from))}
         elif args.command == "recall":
             result = bank.recall(args.profile, args.query, args.limit, args.history)
+        elif args.command == "save-result":
+            result = bank.save_result(args.profile, args.run_id, args.step,
+                                      _load_manifest(args.manifest), args.result)
+        elif args.command == "reuse-result":
+            result = bank.reuse_result(args.profile, args.run_id, args.step,
+                                       _load_manifest(args.manifest))
         else:
             result = bank.export(args.profile)
-    except (ValueError, sqlite3.Error, OSError) as error:
+    except (ValueError, UnicodeError, sqlite3.Error, OSError) as error:
         parser.exit(2, f"Memory journal error: {error}\n")
     print(json.dumps(result, ensure_ascii=False, indent=2))
     return 0

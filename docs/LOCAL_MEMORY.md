@@ -65,6 +65,78 @@ visible in recall for context, so a consuming application must examine the marke
 before presenting them as current. No automatic revalidation or flag-clearing API
 is included. The standalone journal still has no integration with Haven.
 
+## Guarding result reuse with input manifests
+
+`save-result` and `reuse-result` provide an offline, opt-in result store. Each
+result belongs to a `(profile, run_id, step)` key. Save commits once: an identical
+retry returns the original result and timestamp; different inputs or a different
+output for that key raise an explicit error without overwriting anything. Reuse
+returns a result only when its stored manifest matches the supplied manifest;
+an absent key returns JSON `null`. A conflict exits the CLI with status 2 and no
+result on stdout. Use a new run ID or step to retain a revised result alongside
+the original. Other profiles never satisfy a lookup.
+
+Create a private UTF-8 JSON file such as `inputs.json` (this example hashes the
+literal UTF-8 bytes `synthetic leaf`):
+
+```json
+{
+  "version": 1,
+  "question": "What does this synthetic source support?",
+  "sources": [
+    {
+      "locator": "fixture:leaf-v1",
+      "content_sha256": "e4ce29f9111e282324685bf8c35a6253ac32d6dc6c2c873d50950a336373fb62"
+    }
+  ],
+  "processing": {
+    "pipeline": "summary-v1",
+    "options": {"length": 100, "language": "en"}
+  }
+}
+```
+
+```powershell
+python -m lumina_orion.memory save-result orion fixture-run summary --manifest inputs.json --result "Tentative summary"
+python -m lumina_orion.memory reuse-result orion fixture-run summary --manifest inputs.json
+```
+
+Python callers use `bank.save_result(profile, run_id, step, manifest, result_text)`
+and `bank.reuse_result(profile, run_id, step, manifest)`. Both return a result
+dictionary with the original manifest, its SHA-256 fingerprint, and creation
+timestamp; reuse returns `None` for an absent key and raises `ValueError` for a
+conflict. Export includes an additive `results` list under the existing
+`lumina-memory-v1` envelope. Results are separate from sourced note records and
+do not acquire truth or review status merely by being cached. Existing databases
+gain only a new table; prior notes, corrections, and dependency links stay intact.
+
+Manifest v1 requires exactly the four top-level fields above. Supply 1–100
+ordered sources, each with exactly a nonempty locator and a lowercase 64-digit
+SHA-256 content digest. Source order, question text, pipeline version, and all
+processing options count as inputs. Include prompt/template versions, parser
+versions, model identifiers or local configuration when relevant; credentials
+must never be included. The nonempty pipeline identifier is required. Other
+processing fields accept finite JSON values with string object keys. Object key
+order is ignored; list order and text whitespace are preserved. Python encodes
+sorted keys as compact UTF-8 JSON with `allow_nan=False`; the store compares both
+the full encoded manifest and its fingerprint. This is this API's v1 encoding,
+not a claim of universal JSON canonicalization or numeric equivalence (`1` and
+`1.0` differ). Duplicate JSON keys, unsupported versions, non-JSON values, more
+than 20 nesting levels or 10000 values, and manifests above 100000 UTF-8 bytes are
+rejected. CLI input files have the same byte limit, including formatting. Run IDs
+and steps are nonempty strings of at most 200 characters; results have a 20000
+character limit.
+
+The caller must freshly capture source bytes and describe **all** relevant
+processing inputs before reuse. The journal does not fetch locators, calculate
+source digests, detect omitted inputs, or verify source truth. Replaying an old
+manifest can still reuse a stale result. A matching manifest is an input match,
+not independent evidence or a complete task-progress/checkpoint mechanism. The
+tests cover committed-result recovery after an abrupt process exit, conflicting
+writers, rollback, and profile isolation; they do not establish power-loss
+durability or automatic research-worker integration. Keep manifests, results,
+databases, and exports private; only synthetic fixtures belong in this repository.
+
 ## Handoff to Codex on the home computer
 
 Open the existing Haven workspace in local Codex, make this source branch
