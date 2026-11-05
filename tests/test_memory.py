@@ -88,7 +88,7 @@ class MemoryTests(unittest.TestCase):
         self.assertFalse(any(r["needs_review"] for r in self.bank.recall("orion")))
         corrected = self.bank.add("orion", "correction", "Revised", "source:2", source)
         bank = MemoryBank(self.path)
-        records = {r["id"]: r for r in bank.recall("orion")}
+        records = {r["id"]: r for r in bank.recall("orion", include_needs_review=True)}
         self.assertNotIn(source, records)
         self.assertTrue(records[summary]["needs_review"])
         self.assertTrue(records[conclusion]["needs_review"])
@@ -124,11 +124,11 @@ class MemoryTests(unittest.TestCase):
         revised = self.bank.add("orion", "correction", "B", "source:2", first)
         stale = self.bank.add("orion", "inference", "Old basis", "session:1", derived_from=(first,))
         current = self.bank.add("orion", "inference", "New basis", "session:2", derived_from=(revised,))
-        records = {r["id"]: r for r in self.bank.recall("orion")}
+        records = {r["id"]: r for r in self.bank.recall("orion", include_needs_review=True)}
         self.assertTrue(records[stale]["needs_review"])
         self.assertFalse(records[current]["needs_review"])
         self.bank.add("orion", "correction", "C", "source:3", revised)
-        records = {r["id"]: r for r in self.bank.recall("orion")}
+        records = {r["id"]: r for r in self.bank.recall("orion", include_needs_review=True)}
         self.assertTrue(records[current]["needs_review"])
 
     def test_failure_rolls_back_correction_and_dependency_together(self):
@@ -169,11 +169,83 @@ class MemoryTests(unittest.TestCase):
                        "--source", "session:test", "--derived-from", str(source)],
                        check=True, capture_output=True, text=True)
         self.bank.add("orion", "correction", "Revised evidence", "source:2", source)
-        result = subprocess.run(command + ["recall", "orion"],
+        result = subprocess.run(command + ["recall", "orion", "--include-needs-review"],
                                 check=True, capture_output=True, text=True)
         summary = next(r for r in json.loads(result.stdout) if r["text"] == "Summary")
         self.assertEqual(summary["derived_from"], [source])
         self.assertTrue(summary["needs_review"])
+
+    def test_current_recall_filters_review_chains_before_applying_limit(self):
+        source = self.bank.add("orion", "source_note", "Original evidence", "fixture:1")
+        direct = self.bank.add("orion", "inference", "Stale summary", "fixture:2",
+                               derived_from=(source,))
+        transitive = self.bank.add("orion", "inference", "Stale conclusion", "fixture:3",
+                                   derived_from=(direct,))
+        unrelated = self.bank.add("orion", "question", "Unrelated", "fixture:4")
+        replacement = self.bank.add("orion", "correction", "Revised evidence", "fixture:5", source)
+        late = self.bank.add("orion", "inference", "Stale late note", "fixture:6",
+                             derived_from=(source,))
+        bank = MemoryBank(self.path)
+        current = bank.recall("orion")
+        self.assertEqual([r["id"] for r in current], [replacement, unrelated])
+        self.assertTrue(all(r["review_status"] == "unverified" for r in current))
+        # A newer flagged row must not consume the sole result slot.
+        self.assertEqual(bank.recall("orion", limit=1), current[:1])
+        self.assertEqual(bank.recall("orion", "Stale"), [])
+        context = bank.recall("orion", "Stale", include_needs_review=True)
+        self.assertEqual([r["id"] for r in context], [late, transitive, direct])
+        self.assertTrue(all(r["review_status"] == "needs_review" and r["needs_review"]
+                            for r in context))
+        self.assertEqual(bank.recall("orion", "Stale", limit=1, include_needs_review=True),
+                         context[:1])
+
+    def test_history_and_export_keep_originals_and_status_precedence(self):
+        source = self.bank.add("orion", "source_note", "Original", "fixture:1")
+        dependent = self.bank.add("orion", "inference", "Old summary", "fixture:2",
+                                  derived_from=(source,))
+        before = self.bank.export("orion")["records"]
+        self.bank.add("orion", "correction", "Revised source", "fixture:3", source)
+        fresh = self.bank.add("orion", "correction", "New summary", "fixture:4", dependent)
+        bank = MemoryBank(self.path)
+        history = bank.recall("orion", history=True)
+        exported = bank.export("orion")["records"]
+        self.assertEqual(history, list(reversed(exported)))
+        records = {r["id"]: r for r in history}
+        self.assertEqual(records[source]["review_status"], "superseded")
+        self.assertEqual(records[dependent]["review_status"], "superseded")
+        self.assertTrue(records[dependent]["needs_review"])
+        self.assertEqual(records[fresh]["review_status"], "unverified")
+        self.assertFalse(records[fresh]["needs_review"])
+        for original in before:
+            for key in ("id", "profile", "kind", "text", "source", "created_at", "supersedes", "derived_from"):
+                self.assertEqual(records[original["id"]][key], original[key])
+        self.assertEqual(len(exported), 4)
+        self.assertEqual(bank.recall("orion", "Old", history=True, limit=1), [records[dependent]])
+        self.assertNotIn(dependent, [r["id"] for r in bank.recall("orion", include_needs_review=True)])
+
+    def test_cli_review_modes_survive_restart_and_keep_profiles_separate(self):
+        source = self.bank.add("orion", "source_note", "Original", "fixture:1")
+        self.bank.add("orion", "inference", "Shared summary", "fixture:2", derived_from=(source,))
+        self.bank.add("orion", "correction", "Revised", "fixture:3", source)
+        other = self.bank.add("aurora", "inference", "Shared summary", "fixture:2")
+        other_before = self.bank.export("aurora")
+        command = [sys.executable, "-m", "lumina_orion.memory", "--db", str(self.path)]
+
+        def recall(profile, *flags):
+            result = subprocess.run(command + ["recall", profile, *flags],
+                                    check=True, text=True, capture_output=True)
+            return json.loads(result.stdout)
+
+        self.assertEqual(recall("orion", "--query", "Shared"), [])
+        context = recall("orion", "--include-needs-review", "--query", "Shared")
+        self.assertEqual(len(context), 1)
+        self.assertEqual(context[0]["review_status"], "needs_review")
+        self.assertEqual(len(recall("orion", "--history")), 3)
+        self.assertTrue(all(r["profile"] == "orion" for r in recall("orion", "--history")))
+        aurora = recall("aurora", "--include-needs-review")
+        self.assertEqual([r["id"] for r in aurora], [other])
+        self.assertEqual(aurora[0]["review_status"], "unverified")
+        self.assertEqual(MemoryBank(self.path).export("aurora"), other_before)
 
 
 if __name__ == "__main__":
