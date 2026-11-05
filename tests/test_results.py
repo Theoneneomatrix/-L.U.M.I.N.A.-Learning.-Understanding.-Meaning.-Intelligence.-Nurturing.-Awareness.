@@ -193,6 +193,107 @@ class ResultTests(unittest.TestCase):
             self.assertIn("Memory journal error:", response.stderr)
         self.assertEqual(self.bank.export("orion")["results"], [])
 
+    def test_progress_is_scoped_metadata_and_preserves_originals(self):
+        self.bank.add("orion", "question", "Kept original", "fixture:original")
+        last = self.bank.save_result("orion", "fixture-run", "z-last", self.manifest, "Last output")
+        first = self.bank.save_result("orion", "fixture-run", "a-first", self.manifest, "First output")
+        self.bank.save_result("orion", "other-run", "other", self.manifest, "Another run")
+        self.bank.save_result("aurora", "fixture-run", "other", self.manifest, "Another profile")
+        before = {profile: self.bank.export(profile) for profile in ("orion", "aurora")}
+        bank = MemoryBank(self.path)
+        expected = [{key: row[key] for key in ("step", "manifest_sha256", "created_at")}
+                    for row in (first, last)]
+        self.assertEqual(bank.result_progress(" ORION ", "fixture-run"),
+                         {"profile": "orion", "run_id": "fixture-run", "saved_steps": expected})
+        for profile, run in (("orion", "missing"), ("theo", "fixture-run")):
+            self.assertEqual(bank.result_progress(profile, run)["saved_steps"], [])
+        self.assertEqual([r["step"] for r in bank.result_progress("aurora", "fixture-run")["saved_steps"]],
+                         ["other"])
+        self.assertEqual({profile: bank.export(profile) for profile in before}, before)
+
+    def test_progress_rejects_invalid_identity(self):
+        before = self.bank.export("orion")
+        for profile, run in (("unknown", "run"), ("orion", ""), ("orion", " "),
+                             ("orion", "x" * 201), ("orion", True), ("orion", None)):
+            with self.subTest(profile=profile, run=run), self.assertRaises(ValueError):
+                self.bank.result_progress(profile, run)
+        self.assertEqual(self.bank.export("orion"), before)
+
+    def test_progress_does_not_expose_another_connections_uncommitted_result(self):
+        original = self.save()
+        before = self.bank.result_progress("orion", "fixture-run")
+        with sqlite3.connect(self.path) as writer:
+            writer.execute("BEGIN IMMEDIATE")
+            writer.execute("""INSERT INTO research_results
+                SELECT profile,run_id,'pending',manifest_json,manifest_sha256,result_text,created_at
+                FROM research_results WHERE profile='orion' AND run_id='fixture-run' AND step='summary'""")
+            self.assertEqual(self.bank.result_progress("orion", "fixture-run"), before)
+            writer.rollback()
+        self.assertEqual(MemoryBank(self.path).result_progress("orion", "fixture-run"), before)
+        self.assertEqual(self.bank.export("orion")["results"], [original])
+
+    def test_cli_progress_and_resume_at_both_commit_boundaries(self):
+        manifest_path = Path(self.directory.name) / "inputs.json"
+        manifest_path.write_text(json.dumps(self.manifest), encoding="utf-8")
+        # Exit after the inserted row is read back, before _connect commits,
+        # or immediately after save_result returns. Both use the real save API.
+        worker = """
+import json, os, sys
+from lumina_orion.memory import MemoryBank
+path, manifest_path, boundary = sys.argv[1:]
+manifest = json.loads(open(manifest_path, encoding='utf-8').read())
+class InterruptedBank(MemoryBank):
+    @staticmethod
+    def _matching_result(db, inputs):
+        row = MemoryBank._matching_result(db, inputs)
+        if row is not None and boundary == 'before':
+            os._exit(17)
+        return row
+InterruptedBank(path).save_result('orion', 'fixture-run', 'summary', manifest, 'Saved')
+os._exit(18)
+"""
+        for mode in ("DELETE", "WAL"):
+            for boundary in ("before", "after"):
+                with self.subTest(mode=mode, boundary=boundary):
+                    path = Path(self.directory.name) / f"{mode}-{boundary}.sqlite3"
+                    bank = MemoryBank(path)
+                    with sqlite3.connect(path) as db:
+                        self.assertEqual(db.execute(f"PRAGMA journal_mode={mode}").fetchone()[0], mode.lower())
+                    bank.add("orion", "question", "Original", "fixture:kept")
+                    original_notes = bank.export("orion")["records"]
+                    prior = bank.save_result("orion", "fixture-run", "prior", self.manifest, "Earlier result")
+                    bank.save_result("aurora", "fixture-run", "summary", self.manifest, "Unrelated")
+                    other_before = bank.export("aurora")
+                    exited = subprocess.run([sys.executable, "-c", worker, str(path),
+                                             str(manifest_path), boundary],
+                                            capture_output=True, text=True, timeout=10)
+                    self.assertEqual(exited.returncode, 17 if boundary == "before" else 18, exited.stderr)
+                    command = [sys.executable, "-m", "lumina_orion.memory", "--db", str(path)]
+                    response = subprocess.run(command + ["progress", "orion", "fixture-run"],
+                                              check=True, capture_output=True, text=True, timeout=10)
+                    progress = json.loads(response.stdout)
+                    self.assertEqual([r["step"] for r in progress["saved_steps"]],
+                                     ["prior"] if boundary == "before" else ["prior", "summary"])
+                    bank = MemoryBank(path)
+                    saved = bank.reuse_result("orion", "fixture-run", "summary", self.manifest)
+                    if boundary == "before":
+                        self.assertIsNone(saved)
+                    else:
+                        self.assertEqual(saved["result_text"], "Saved")
+                    resumed = bank.save_result("orion", "fixture-run", "summary", self.manifest, "Saved")
+                    self.assertEqual(bank.save_result("orion", "fixture-run", "summary", self.manifest, "Saved"), resumed)
+                    if saved is not None:
+                        self.assertEqual(resumed, saved)
+                    changed = {**self.manifest, "question": "Changed inputs"}
+                    with self.assertRaisesRegex(ValueError, "different inputs"):
+                        bank.reuse_result("orion", "fixture-run", "summary", changed)
+                    self.assertEqual([r["step"] for r in bank.result_progress("orion", "fixture-run")["saved_steps"]],
+                                     ["prior", "summary"])
+                    self.assertEqual(bank.reuse_result("orion", "fixture-run", "prior", self.manifest), prior)
+                    self.assertEqual(len(bank.export("orion")["results"]), 2)
+                    self.assertEqual(bank.export("orion")["records"], original_notes)
+                    self.assertEqual(bank.export("aurora"), other_before)
+
 
 if __name__ == "__main__":
     unittest.main()
