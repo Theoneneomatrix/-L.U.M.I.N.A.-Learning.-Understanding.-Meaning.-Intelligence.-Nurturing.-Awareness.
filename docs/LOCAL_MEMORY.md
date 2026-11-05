@@ -161,6 +161,35 @@ writers, rollback, and profile isolation; they do not establish power-loss
 durability or automatic research-worker integration. Keep manifests, results,
 databases, and exports private; only synthetic fixtures belong in this repository.
 
+## Discovering saved progress after interruption
+
+`python -m lumina_orion.memory progress orion fixture-run` lists the committed
+result steps for that exact profile and run. Python callers use
+`bank.result_progress("orion", "fixture-run")`. The response contains `profile`,
+`run_id`, and `saved_steps`, sorted by step name. Each step contains only its
+`step`, `manifest_sha256`, and original `created_at`; result text and input
+manifests are not returned. Treat even this metadata as private.
+
+Progress is derived from the saved result rows in one database query. There is
+no separately updated counter or checkpoint that can advance before the result
+commits. A fresh call sees committed results, not another connection's pending
+insert. An interrupted uncommitted save contributes no step; an interrupted
+process whose save committed contributes exactly one. Identical retries retain
+the same result and timestamp. No schema change or existing-record rewrite is
+needed. Tests cover abrupt exits on both sides of commit in DELETE and WAL
+journal modes, plus rollback, restart, profile/run isolation, and originals.
+
+Use this view to discover candidate saved work, then call `reuse-result` with a
+fresh manifest for each candidate before reusing it. A listed step does **not**
+establish that its inputs still match, its sources are fresh, its interpretation
+is correct, or the entire task is complete. There is no registered task plan,
+expected-step count, lease, cancellation state, or worker scheduler here. An empty
+list means no committed results for that profile/run; it cannot distinguish an
+unknown run from work that started but never saved. The list is intentionally
+unbounded within one run, like full export; callers should use bounded runs.
+These process-exit tests do not simulate power loss or exactly-once external
+actions. This remains an offline component rather than a running research worker.
+
 ## Handoff to Codex on the home computer
 
 Open the existing Haven workspace in local Codex, make this source branch

@@ -294,6 +294,21 @@ class MemoryBank:
             row = self._matching_result(db, inputs)
             return self._result(row) if row else None
 
+    def result_progress(self, profile: str, run_id: str) -> dict:
+        """Discover saved steps, not input validity or whole-task completion.
+
+        Progress is derived from committed results, never a separate counter.
+        Call reuse_result with current inputs before reusing any listed step.
+        """
+        profile = self._profile(profile)
+        if type(run_id) is not str or not run_id.strip() or len(run_id) > 200:
+            raise ValueError("Run ID must be nonempty text, at most 200 characters")
+        with self._connect() as db:
+            steps = [dict(row) for row in db.execute(
+                "SELECT step, manifest_sha256, created_at FROM research_results "
+                "WHERE profile=? AND run_id=? ORDER BY step", (profile, run_id))]
+        return {"profile": profile, "run_id": run_id, "saved_steps": steps}
+
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
@@ -318,6 +333,10 @@ def main(argv: list[str] | None = None) -> int:
                         help="Include unresolved current notes for context, with review markers")
     export = commands.add_parser("export", help="Write the complete profile history as JSON to stdout")
     export.add_argument("profile", choices=PROFILES)
+    progress = commands.add_parser("progress", help="List saved result steps for one profile and run",
+        description="Report committed result metadata only. Check current inputs with reuse-result before reuse.")
+    progress.add_argument("profile", choices=PROFILES)
+    progress.add_argument("run_id")
     for name in ("save-result", "reuse-result"):
         command = commands.add_parser(name, help="Save or check a result against declared inputs")
         command.add_argument("profile", choices=PROFILES)
@@ -341,6 +360,8 @@ def main(argv: list[str] | None = None) -> int:
         elif args.command == "reuse-result":
             result = bank.reuse_result(args.profile, args.run_id, args.step,
                                        _load_manifest(args.manifest))
+        elif args.command == "progress":
+            result = bank.result_progress(args.profile, args.run_id)
         else:
             result = bank.export(args.profile)
     except (ValueError, UnicodeError, sqlite3.Error, OSError) as error:
