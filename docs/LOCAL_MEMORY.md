@@ -28,8 +28,9 @@ can be a URL, archive identifier with page numbers, or a conversation identifier
 Reference existence and content are not automatically checked.
 
 A `correction` must supply `--supersedes ID` targeting the latest record in the
-same profile. Recall hides superseded entries by default; `--history` includes
-them. Export includes the entire profile history. Repeating an identical write
+same profile. Recall hides superseded and needs-review entries by default;
+`--history` includes both (subject to query and limit). Export includes the
+entire profile history. Repeating an identical write
 returns its original ID, including after restarting the program.
 
 Profiles: `orion`, `aurora`, `theo`, `elysia`, `selene`. All reads require a profile.
@@ -50,7 +51,7 @@ Identical retries with equivalent dependency sets return the same record ID;
 different dependencies for that existing note raise an explicit conflict.
 Append a distinct revised note instead of silently rewriting its provenance.
 
-Recall and export now include additive `derived_from` and `needs_review` fields
+Recall and export include additive `derived_from` and `needs_review` fields
 on each record, retaining the `lumina-memory-v1` export envelope. A correction
 causes direct and transitive dependents to report `needs_review: true`, including
 notes added later against an already superseded source. These markers are derived
@@ -58,12 +59,35 @@ from stored links at read time, so they persist across restarts without a separa
 flag-update job. Original records are retained. Existing databases gain a new
 dependency table and indexes; their records are not rewritten.
 
-`needs_review: false` does not certify a record as true or verified. Only explicit
-links can be checked; missing attribution, stale external sources without recorded
-corrections, and unknown dependencies cannot be detected. Flagged notes remain
-visible in recall for context, so a consuming application must examine the marker
-before presenting them as current. No automatic revalidation or flag-clearing API
-is included. The standalone journal still has no integration with Haven.
+### Current recall and historical context
+
+Each returned note also has a derived `review_status`: `superseded` if a
+replacement exists, otherwise `needs_review` if a dependency chain is flagged,
+otherwise `unverified`. A superseded note can still have `needs_review: true`;
+the boolean is retained even when the status gives precedence to supersession.
+These are provenance states, not truth judgments. There is no `verified` state.
+The field is additive under the existing export envelope; no database migration
+or original-record rewrite is needed.
+
+**Behavior change:** current recall now excludes unresolved review notes as well
+as superseded notes. Use `recall orion --include-needs-review` for current notes
+including flagged context, or `recall orion --history` for all versions and review
+states. Query and limit still apply in both modes; export remains complete.
+Python callers use `bank.recall("orion", include_needs_review=True)` or
+`bank.recall("orion", history=True)`. Exclusion happens before ordering and limit,
+so a newer flagged note cannot consume the result slot of an eligible note.
+Existing consumers may receive fewer notes after upgrading. An empty current
+result can mean no matching unflagged notes; it does not establish that the
+profile has no history. Context modes preserve review markers for callers to
+display and evaluate.
+
+`needs_review: false` and `review_status: unverified` do not certify truth or
+verification. Only explicit links can be checked; missing attribution, stale
+external sources without recorded corrections, and unknown dependencies cannot
+be detected. No automatic revalidation or flag-clearing API is included. To
+record a changed interpretation, append a correction with its actual supporting
+links; the correction itself remains unverified. The standalone journal still
+has no integration with Haven.
 
 ## Guarding result reuse with input manifests
 

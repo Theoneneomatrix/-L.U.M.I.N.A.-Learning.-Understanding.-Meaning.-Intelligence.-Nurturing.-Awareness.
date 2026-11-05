@@ -205,6 +205,7 @@ class MemoryBank:
             JOIN memories child ON child.id=d.child_id WHERE child.profile=?
         )
         SELECT m.*, EXISTS(SELECT 1 FROM affected WHERE affected.id=m.id) AS needs_review,
+            EXISTS(SELECT 1 FROM memories c WHERE c.supersedes=m.id) AS is_superseded,
             (SELECT group_concat(parent_id) FROM dependencies WHERE child_id=m.id) AS dependency_ids
         FROM memories m WHERE m.profile=? """ + suffix,
             (profile, profile, profile, profile, *parameters)).fetchall()
@@ -214,11 +215,18 @@ class MemoryBank:
             record["derived_from"] = sorted(int(value) for value in
                                           (record.pop("dependency_ids") or "").split(",") if value)
             record["needs_review"] = bool(record["needs_review"])
+            record["review_status"] = ("superseded" if record.pop("is_superseded") else
+                                       "needs_review" if record["needs_review"] else "unverified")
             records.append(record)
         return records
 
     def recall(self, profile: str, query: str = "", limit: int = 20,
-               history: bool = False) -> list[dict]:
+               history: bool = False, *, include_needs_review: bool = False) -> list[dict]:
+        """Read unflagged current notes by default; unflagged does not mean verified.
+
+        Opt in to unresolved notes for context, or use history for all versions.
+        Query and limit apply to every mode; export provides the complete history.
+        """
         profile = self._profile(profile)
         if not 1 <= limit <= 1000:
             raise ValueError("Limit must be between 1 and 1000")
@@ -227,8 +235,9 @@ class MemoryBank:
             return self._records(db, profile,
                 "AND instr(lower(m.text), lower(?)) > 0 "
                 "AND (? OR NOT EXISTS (SELECT 1 FROM memories c WHERE c.supersedes=m.id)) "
+                "AND (? OR NOT EXISTS (SELECT 1 FROM affected a WHERE a.id=m.id)) "
                 "ORDER BY m.id DESC LIMIT ?",
-                (query, history, limit))
+                (query, history, history or include_needs_review, limit))
 
     def export(self, profile: str) -> dict:
         profile = self._profile(profile)
@@ -298,11 +307,15 @@ def main(argv: list[str] | None = None) -> int:
     add.add_argument("--supersedes", type=int)
     add.add_argument("--derived-from", type=int, action="append", default=[],
                      help="Supporting record ID; repeat for multiple sources (maximum 100)")
-    recall = commands.add_parser("recall", help="Read current records for one profile")
+    recall = commands.add_parser("recall", help="Read unflagged current records for one profile",
+        description="Omit superseded and needs-review notes by default. Returned notes are unverified.")
     recall.add_argument("profile", choices=PROFILES)
     recall.add_argument("--query", default="")
     recall.add_argument("--limit", default=20, type=int)
-    recall.add_argument("--history", action="store_true")
+    recall.add_argument("--history", action="store_true",
+                        help="Include all versions and unresolved review notes; query/limit still apply")
+    recall.add_argument("--include-needs-review", action="store_true",
+                        help="Include unresolved current notes for context, with review markers")
     export = commands.add_parser("export", help="Write the complete profile history as JSON to stdout")
     export.add_argument("profile", choices=PROFILES)
     for name in ("save-result", "reuse-result"):
@@ -320,7 +333,8 @@ def main(argv: list[str] | None = None) -> int:
             result = {"id": bank.add(args.profile, args.kind, args.text, args.source,
                                      args.supersedes, derived_from=tuple(args.derived_from))}
         elif args.command == "recall":
-            result = bank.recall(args.profile, args.query, args.limit, args.history)
+            result = bank.recall(args.profile, args.query, args.limit, args.history,
+                                  include_needs_review=args.include_needs_review)
         elif args.command == "save-result":
             result = bank.save_result(args.profile, args.run_id, args.step,
                                       _load_manifest(args.manifest), args.result)
