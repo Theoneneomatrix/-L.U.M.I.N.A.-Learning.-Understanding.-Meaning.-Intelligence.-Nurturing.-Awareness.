@@ -190,6 +190,33 @@ unbounded within one run, like full export; callers should use bounded runs.
 These process-exit tests do not simulate power loss or exactly-once external
 actions. This remains an offline component rather than a running research worker.
 
+## Read only deletion impact preview
+
+`python -m lumina_orion.memory deletion-impact orion 1` previews candidate note
+IDs for review; it does not delete anything or authorize removal. Python callers
+use `bank.deletion_impact("orion", (1,))`. Supply 1–100 positive integer IDs, all
+existing in the requested profile. Duplicate IDs are normalized. The preview
+includes the roots, direct/transitive dependents, and correction descendants
+connected by stored links. It does not include supporting ancestors merely
+because an affected note also used them. IDs are sorted; no record text is returned.
+
+The response includes `scope: recorded_note_links_only` and an
+`unmapped_result_count`: all cached results in that profile require separate
+review because they have no explicit link to note IDs. A zero count does not
+establish that unlinked text, exports, backups, logs, or other copies are clear.
+The candidate closure is conservative; inclusion does not prove a note contains
+the target information. Do not interpret this output as an erasure certificate.
+
+Validation, traversal, and the result count share one read transaction. A preview
+can become stale immediately after that snapshot. There is no apply command,
+stale-plan guard, removal ledger, or restore gate. Recompute and review impact
+before any future separately designed action. Tests use invented temporary
+records only: a fixture-only reconciliation removes the selected closure while
+preserving unrelated notes/profiles, then restores an old backup and demonstrates
+that removed records return. This does not modify real archives or prove physical
+erasure. Backup reconciliation and protection against stale workers remain future
+work. The preview adds no schema or record mutation.
+
 ## Handoff to Codex on the home computer
 
 Open the existing Haven workspace in local Codex, make this source branch
