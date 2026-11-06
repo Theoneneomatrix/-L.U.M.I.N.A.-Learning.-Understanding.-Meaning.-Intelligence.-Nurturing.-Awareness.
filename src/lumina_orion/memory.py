@@ -248,6 +248,36 @@ class MemoryBank:
         return {"format": "lumina-memory-v1", "profile": profile,
                 "records": records, "results": results}
 
+    def deletion_impact(self, profile: str, record_ids: tuple[int, ...]) -> dict:
+        """Preview recorded note descendants only; never delete or authorize removal."""
+        profile = self._profile(profile)
+        if (not 1 <= len(record_ids) <= 100
+                or any(type(value) is not int or value <= 0 for value in record_ids)):
+            raise ValueError("Supply 1 to 100 positive integer record IDs")
+        roots = sorted(set(record_ids))
+        slots = ",".join("?" for _ in roots)
+        with self._connect() as db:
+            # Validation, traversal, and unmapped-result count share a read snapshot.
+            db.execute("BEGIN")
+            found = db.execute(f"SELECT count(*) FROM memories WHERE profile=? AND id IN ({slots})",
+                               (profile, *roots)).fetchone()[0]
+            if found != len(roots):
+                raise ValueError("Every record must exist in the requested profile")
+            affected = [row[0] for row in db.execute(f"""WITH RECURSIVE
+                edges(child,parent) AS (
+                    SELECT child_id,parent_id FROM dependencies
+                    UNION SELECT id,supersedes FROM memories WHERE supersedes IS NOT NULL
+                ), affected(id) AS (
+                    SELECT id FROM memories WHERE profile=? AND id IN ({slots})
+                    UNION
+                    SELECT e.child FROM edges e JOIN affected a ON e.parent=a.id
+                    JOIN memories m ON m.id=e.child WHERE m.profile=?
+                ) SELECT id FROM affected ORDER BY id""", (profile, *roots, profile))]
+            unmapped = db.execute("SELECT count(*) FROM research_results WHERE profile=?",
+                                  (profile,)).fetchone()[0]
+        return {"profile": profile, "requested_ids": roots, "affected_ids": affected,
+                "scope": "recorded_note_links_only", "unmapped_result_count": unmapped}
+
     @staticmethod
     def _result(row: sqlite3.Row) -> dict:
         result = dict(row)
@@ -337,6 +367,10 @@ def main(argv: list[str] | None = None) -> int:
         description="Report committed result metadata only. Check current inputs with reuse-result before reuse.")
     progress.add_argument("profile", choices=PROFILES)
     progress.add_argument("run_id")
+    impact = commands.add_parser("deletion-impact", help="Preview linked note IDs; does not delete",
+        description="Read-only candidate preview. Excludes unlinked copies and cached result contents.")
+    impact.add_argument("profile", choices=PROFILES)
+    impact.add_argument("record_ids", type=int, nargs="+")
     for name in ("save-result", "reuse-result"):
         command = commands.add_parser(name, help="Save or check a result against declared inputs")
         command.add_argument("profile", choices=PROFILES)
@@ -362,6 +396,8 @@ def main(argv: list[str] | None = None) -> int:
                                        _load_manifest(args.manifest))
         elif args.command == "progress":
             result = bank.result_progress(args.profile, args.run_id)
+        elif args.command == "deletion-impact":
+            result = bank.deletion_impact(args.profile, tuple(args.record_ids))
         else:
             result = bank.export(args.profile)
     except (ValueError, UnicodeError, sqlite3.Error, OSError) as error:
