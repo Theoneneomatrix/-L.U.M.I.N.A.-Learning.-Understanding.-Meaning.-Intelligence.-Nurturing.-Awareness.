@@ -209,13 +209,31 @@ the target information. Do not interpret this output as an erasure certificate.
 
 Validation, traversal, and the result count share one read transaction. A preview
 can become stale immediately after that snapshot. There is no apply command,
-stale-plan guard, removal ledger, or restore gate. Recompute and review impact
+atomic check-and-remove guard, removal ledger, or restore gate. Recompute and review impact
 before any future separately designed action. Tests use invented temporary
 records only: a fixture-only reconciliation removes the selected closure while
 preserving unrelated notes/profiles, then restores an old backup and demonstrates
 that removed records return. This does not modify real archives or prove physical
 erasure. Backup reconciliation and protection against stale workers remain future
 work. The preview adds no schema or record mutation.
+
+Each preview now includes a `fingerprint`. Recheck a reviewed preview with
+`deletion-impact orion 1 --expected-fingerprint HEX`, or pass the keyword-only
+`expected_fingerprint=...` to `deletion_impact`. A mismatch raises an explicit
+error (CLI exit 2 with no plan on stdout); a match returns the current preview.
+Profile and normalized requested IDs are bound into the fingerprint, along with
+all stored note fields, dependency edges, and cached-result fields in that
+profile. Any such profile change conservatively invalidates review, including
+unrelated notes within the same profile; other profiles do not. Serialization
+uses a versioned snapshot, sorted JSON keys and rows, and a SHA-256 digest.
+The method reads the entire profile; this adds work proportional to its size.
+
+This compares content snapshots, not permission or authenticity. The fingerprint
+is not a signature, an anonymity measure, a durable removal record, or rollback
+protection. An identical old backup will match its old fingerprint. A match is
+valid only in that read snapshot; a writer can change data after return. A future
+apply operation must check and mutate within one appropriate write transaction,
+and still address restore gates and untracked copies. No apply command is added.
 
 ## Handoff to Codex on the home computer
 

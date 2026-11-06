@@ -31,9 +31,10 @@ class DeletionImpactTests(unittest.TestCase):
     def test_preview_traverses_both_edge_types_preserves_originals_and_restarts(self):
         before = {p: self.bank.export(p) for p in ("orion", "aurora")}
         preview = MemoryBank(self.path).deletion_impact(" ORION ", (self.source, self.source))
+        self.assertRegex(preview["fingerprint"], r"^[0-9a-f]{64}$")
         self.assertEqual(preview, {"profile": "orion", "requested_ids": [self.source],
                                    "affected_ids": self.affected, "scope": "recorded_note_links_only",
-                                   "unmapped_result_count": 0})
+                                   "unmapped_result_count": 0, "fingerprint": preview["fingerprint"]})
         self.assertNotIn(self.parent, preview["affected_ids"])
         self.assertNotIn(self.unlinked, preview["affected_ids"])
         self.assertEqual(self.bank.deletion_impact("orion", (self.source, self.parent))["affected_ids"],
@@ -70,6 +71,65 @@ class DeletionImpactTests(unittest.TestCase):
         new = MemoryBank(self.path).deletion_impact("orion", (self.source,))
         self.assertNotIn(added, old["affected_ids"])
         self.assertEqual(new["affected_ids"], self.affected + [added])
+        with self.assertRaisesRegex(ValueError, "preview changed"):
+            self.bank.deletion_impact("orion", (self.source,), expected_fingerprint=old["fingerprint"])
+
+    def test_fingerprint_restart_normalization_and_profile_isolation(self):
+        old = self.bank.deletion_impact("orion", (self.source,))
+        self.bank.add("aurora", "question", "Unrelated change", "fixture:other-profile")
+        before = self.bank.export("orion")
+        bank = MemoryBank(self.path)
+        self.assertEqual(bank.deletion_impact(" ORION ", (self.source, self.source),
+                         expected_fingerprint=old["fingerprint"]), old)
+        for profile, roots in (("orion", (self.summary,)), ("aurora", (self.other_profile,))):
+            with self.subTest(profile=profile), self.assertRaisesRegex(ValueError, "preview changed"):
+                bank.deletion_impact(profile, roots, expected_fingerprint=old["fingerprint"])
+        self.assertEqual(bank.export("orion"), before)
+
+    def test_changed_content_and_links_with_same_ids_reject_review(self):
+        old = self.bank.deletion_impact("orion", (self.source,))
+        for change, undo in (
+            (("UPDATE memories SET text=? WHERE id=?", ("Changed", self.summary)),
+             ("UPDATE memories SET text=? WHERE id=?", ("Combined", self.summary))),
+            (("DELETE FROM dependencies WHERE child_id=? AND parent_id=?", (self.summary, self.parent)),
+             ("INSERT INTO dependencies VALUES (?,?)", (self.summary, self.parent))),
+        ):
+            with sqlite3.connect(self.path) as db:
+                db.execute(*change)
+            self.assertEqual(self.bank.deletion_impact("orion", (self.source,))["affected_ids"], self.affected)
+            with self.assertRaisesRegex(ValueError, "preview changed"):
+                self.bank.deletion_impact("orion", (self.source,), expected_fingerprint=old["fingerprint"])
+            with sqlite3.connect(self.path) as db:
+                db.execute(*undo)
+
+    def test_cached_result_change_rejects_review_even_with_same_count(self):
+        manifest = {"version": 1, "question": "Invented", "sources": [
+            {"locator": "fixture:source", "content_sha256": "a" * 64}],
+            "processing": {"pipeline": "fixture-v1"}}
+        self.bank.save_result("orion", "run", "step", manifest, "Original")
+        old = self.bank.deletion_impact("orion", (self.source,))
+        with sqlite3.connect(self.path) as db:
+            db.execute("UPDATE research_results SET result_text='Changed' WHERE profile='orion'")
+        self.assertEqual(self.bank.deletion_impact("orion", (self.source,))["unmapped_result_count"], 1)
+        with self.assertRaisesRegex(ValueError, "preview changed"):
+            self.bank.deletion_impact("orion", (self.source,), expected_fingerprint=old["fingerprint"])
+
+    def test_cli_fingerprint_success_conflict_and_validation_do_not_write(self):
+        old = self.bank.deletion_impact("orion", (self.source,))
+        command = [sys.executable, "-m", "lumina_orion.memory", "--db", str(self.path),
+                   "deletion-impact", "orion", str(self.source), "--expected-fingerprint", old["fingerprint"]]
+        response = subprocess.run(command, check=True, capture_output=True, text=True, timeout=10)
+        self.assertEqual(json.loads(response.stdout), old)
+        self.bank.add("orion", "question", "Same-profile unrelated change", "fixture:new")
+        before = self.bank.export("orion")
+        rejected = subprocess.run(command, capture_output=True, text=True, timeout=10)
+        self.assertEqual(rejected.returncode, 2)
+        self.assertEqual(rejected.stdout, "")
+        self.assertIn("preview changed", rejected.stderr)
+        for fingerprint in ("", "a" * 63, "A" * 64, True, 12):
+            with self.subTest(fingerprint=fingerprint), self.assertRaises(ValueError):
+                self.bank.deletion_impact("orion", (self.source,), expected_fingerprint=fingerprint)
+        self.assertEqual(self.bank.export("orion"), before)
 
     def test_synthetic_reconciliation_and_old_backup_resurrection(self):
         # Fixture-only removal, NOT a shipped deletion method or production recipe.
@@ -94,6 +154,9 @@ class DeletionImpactTests(unittest.TestCase):
             source.backup(target)
         restored_bank = MemoryBank(restored)
         self.assertEqual(restored_bank.deletion_impact("orion", (self.source,)), preview)
+        # An identical restored snapshot also matches: no rollback protection.
+        self.assertEqual(restored_bank.deletion_impact("orion", (self.source,),
+                         expected_fingerprint=preview["fingerprint"]), preview)
         self.assertEqual(restored_bank.export("aurora"), before_other)
 
 

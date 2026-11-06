@@ -248,9 +248,14 @@ class MemoryBank:
         return {"format": "lumina-memory-v1", "profile": profile,
                 "records": records, "results": results}
 
-    def deletion_impact(self, profile: str, record_ids: tuple[int, ...]) -> dict:
+    def deletion_impact(self, profile: str, record_ids: tuple[int, ...], *,
+                        expected_fingerprint: str | None = None) -> dict:
         """Preview recorded note descendants only; never delete or authorize removal."""
         profile = self._profile(profile)
+        if expected_fingerprint is not None and (
+                type(expected_fingerprint) is not str
+                or not re.fullmatch(r"[0-9a-f]{64}", expected_fingerprint)):
+            raise ValueError("Expected fingerprint must be a lowercase SHA-256 hex digest")
         if (not 1 <= len(record_ids) <= 100
                 or any(type(value) is not int or value <= 0 for value in record_ids)):
             raise ValueError("Supply 1 to 100 positive integer record IDs")
@@ -275,8 +280,23 @@ class MemoryBank:
                 ) SELECT id FROM affected ORDER BY id""", (profile, *roots, profile))]
             unmapped = db.execute("SELECT count(*) FROM research_results WHERE profile=?",
                                   (profile,)).fetchone()[0]
+            # Conservative: any stored change in this profile invalidates review.
+            snapshot = {"version": 1, "profile": profile, "requested_ids": roots,
+                "records": [dict(row) for row in db.execute(
+                    "SELECT * FROM memories WHERE profile=? ORDER BY id", (profile,))],
+                "dependencies": [list(row) for row in db.execute(
+                    "SELECT d.child_id,d.parent_id FROM dependencies d "
+                    "JOIN memories m ON m.id=d.child_id WHERE m.profile=? "
+                    "ORDER BY d.child_id,d.parent_id", (profile,))],
+                "results": [dict(row) for row in db.execute(
+                    "SELECT * FROM research_results WHERE profile=? ORDER BY run_id,step", (profile,))]}
+            encoded = json.dumps(snapshot, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+            fingerprint = hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+            if expected_fingerprint is not None and expected_fingerprint != fingerprint:
+                raise ValueError("Deletion preview changed; recompute and review before proceeding")
         return {"profile": profile, "requested_ids": roots, "affected_ids": affected,
-                "scope": "recorded_note_links_only", "unmapped_result_count": unmapped}
+                "scope": "recorded_note_links_only", "unmapped_result_count": unmapped,
+                "fingerprint": fingerprint}
 
     @staticmethod
     def _result(row: sqlite3.Row) -> dict:
@@ -371,6 +391,8 @@ def main(argv: list[str] | None = None) -> int:
         description="Read-only candidate preview. Excludes unlinked copies and cached result contents.")
     impact.add_argument("profile", choices=PROFILES)
     impact.add_argument("record_ids", type=int, nargs="+")
+    impact.add_argument("--expected-fingerprint",
+                        help="Reject if the reviewed profile snapshot or requested IDs changed")
     for name in ("save-result", "reuse-result"):
         command = commands.add_parser(name, help="Save or check a result against declared inputs")
         command.add_argument("profile", choices=PROFILES)
@@ -397,7 +419,8 @@ def main(argv: list[str] | None = None) -> int:
         elif args.command == "progress":
             result = bank.result_progress(args.profile, args.run_id)
         elif args.command == "deletion-impact":
-            result = bank.deletion_impact(args.profile, tuple(args.record_ids))
+            result = bank.deletion_impact(args.profile, tuple(args.record_ids),
+                                          expected_fingerprint=args.expected_fingerprint)
         else:
             result = bank.export(args.profile)
     except (ValueError, UnicodeError, sqlite3.Error, OSError) as error:
