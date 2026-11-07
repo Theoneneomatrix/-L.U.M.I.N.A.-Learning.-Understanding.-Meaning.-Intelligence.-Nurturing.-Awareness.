@@ -235,6 +235,34 @@ valid only in that read snapshot; a writer can change data after return. A futur
 apply operation must check and mutate within one appropriate write transaction,
 and still address restore gates and untracked copies. No apply command is added.
 
+### Atomic reconciliation test fixture
+
+`tests/test_deletion_atomicity.py` exercises the real preview while a separate
+connection holds a `BEGIN IMMEDIATE` writer reservation. The fixture acquires
+the reservation before rechecking the fingerprint, closes the preview reader
+before any mutation, and retains the reservation through its fixture-only
+cleanup and commit. This tests a bounded transaction pattern, not an application
+apply API. The helper belongs only to the tests and must not be used on archives.
+
+In both DELETE and WAL modes, deterministic probes at the review and mutation
+boundaries confirm that another connection cannot acquire a write reservation
+and that readers see committed originals. Tests verify stale-review rejection,
+rollback after an injected exception, abrupt process exit before commit, and
+persistence after an exit following commit. Unrelated records, their metadata,
+and another profile remain intact; writers proceed after the reservation ends.
+These checks cover process interruption, not power loss or every filesystem.
+
+SQLite permits one writer per database, so this reservation also blocks writes
+to other profiles. Profile isolation here concerns preserved content, not
+independent write availability or access control. A future application adapter
+still needs bounded busy handling and an explicit retry/review policy. Durable
+removal records, cached-result mapping, restore gates, and untracked copies
+remain unresolved; the test does not provide physical erasure or backup safety.
+
+See SQLite's [transaction documentation](https://www.sqlite.org/lang_transaction.html)
+and [isolation documentation](https://www.sqlite.org/isolation.html) for writer
+serialization and the distinction between rollback-journal and WAL readers.
+
 ## Handoff to Codex on the home computer
 
 Open the existing Haven workspace in local Codex, make this source branch
