@@ -144,3 +144,40 @@ explain duplicate-name and Unicode interoperability concerns; [Python's JSON
 documentation](https://docs.python.org/3/library/json.html) describes duplicate
 member defaults, `object_pairs_hook`, and encoder controls. The binding scheme
 and its limits above are this project's design choices.
+
+## Persistent first-binding registry
+
+`SnapshotBindingRegistry(path)` in `lumina_orion.snapshot_registry` adds only a
+`snapshot_bindings` table to a caller-selected local SQLite database. It can use
+a separate file from notes; separation alone does not establish trust. Existing
+note tables and rows are not rewritten. The stored fields are exactly the five
+binding fields above: no manifest payload, reviewer text, history, timestamp or
+approval assertion is added. Identifiers and digests can still be sensitive and
+linkable. This is not a complete audit or retention system.
+
+- `record(profile, payload)` validates strict JSON using the existing scheme and
+  commits the first binding for the normalized profile and snapshot ID. An
+  identical retry returns that binding without replacing it; changed declarations
+  under the same identity raise `ValueError`. The writer reservation covers lookup
+  and insertion together; success returns after commit. Busy/I/O errors propagate.
+- `get(profile, snapshot_id)` returns one detached binding or `None`. Queries are
+  scoped; no enumeration API is provided. Profile scoping is not access control.
+- `verify(profile, payload)` returns the detached normalized manifest only if it
+  matches that identity's registered binding. Missing bindings raise `ValueError`
+  and never auto-register. A match applies to the observed binding, not a later
+  operation; verification does not reserve a transaction for subsequent action.
+
+Choose and retain the registry independently of an untrusted candidate. Calling
+`record` on first sight is a caller decision, not evidence that the candidate was
+reviewed. There is no overwrite/delete API; this interface preserves first
+bindings, but file owners can bypass it and old database copies can lose newer
+bindings. A rolled-back or replaced registry is not detected. No registry match
+establishes authorship, freshness, current authority, complete coverage, actual
+note content, deletion, or restore permission. A new snapshot ID can register a
+different declaration; that does not supersede an earlier review automatically.
+
+Tests use only invented data and verify retries, conflicting concurrent writers,
+all profile scopes, additive table creation alongside unchanged notes, detached
+results, malformed-input rejection, exception rollback, fresh-process reads and
+abrupt exits before/after commit in DELETE and WAL modes. They do not test power
+loss, hostile file owners, untracked copies or actual archive integration.
