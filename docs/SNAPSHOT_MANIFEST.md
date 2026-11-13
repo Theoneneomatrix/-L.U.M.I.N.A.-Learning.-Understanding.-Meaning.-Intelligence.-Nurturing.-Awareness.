@@ -181,3 +181,47 @@ all profile scopes, additive table creation alongside unchanged notes, detached
 results, malformed-input rejection, exception rollback, fresh-process reads and
 abrupt exits before/after commit in DELETE and WAL modes. They do not test power
 loss, hostile file owners, untracked copies or actual archive integration.
+
+## Read-only history observation contract
+
+`inspect_snapshot_history(profile, payload, expected, observation=None)` in
+`lumina_orion.snapshot_history` first requires the existing strict declaration
+binding. It then compares the declared history boundary with one separately
+supplied observation. It performs no I/O and stores nothing. A malformed binding,
+unknown/extra observation field, unsupported version/state, cross-profile envelope,
+or invalid identity raises `ValueError` rather than returning clearance.
+
+The observation is exactly `{"version": 1, "profile": "orion", "state": "current",
+"history_boundary": "fixture:boundary"}`. Version must
+be integer 1, profile uses the existing normalization, and boundary is nullable
+or a nonempty control-free identity of at most 200 characters. State is exactly
+`current`, `stale`, or `unavailable`; `current` requires a non-null boundary.
+These are **caller assertions**, not authenticated evidence. Obtain and select
+observations independently; do not manufacture `current` from the candidate.
+No timestamps, private paths, source payloads or reviewer narratives are required.
+Permitted identifiers may still be sensitive; this API is not a retention policy.
+
+Every report has exactly version, profile, snapshot_id, read_only (`True`),
+history_status, authority (`caller_asserted_only`) and reopening (`not_assessed`).
+Statuses are `observation_missing`, `observation_stale`, `observation_unavailable`,
+`declaration_boundary_unspecified`, `boundary_conflict`, or
+`boundary_matches_assertion`. Non-current states take precedence over boundary
+comparison. Conflict reports disagreement, not which opaque boundary is newer.
+Even a matching assertion never authorizes reopening, publication or deletion.
+A valid complete declaration, saved digest or identical retry cannot override it.
+This is a read-only contract component; it is not an application action gate.
+
+Negative controls retain an old matching declaration/binding and supply a newer
+boundary, producing a conflict; replaying both old declarations and observations
+can still match. That second control demonstrates the unresolved trust problem,
+not rollback detection. An independently current, authenticated observation and
+safe ordering with future actions remain required before any action adapter.
+No network service, authentication mechanism, destructive migration, note mapping
+or apply operation is introduced. Recheck on retry; never cache a report as a
+permission token. Tests verify profile scope, unchanged inputs/originals,
+read-only behavior and fresh-process comparisons in DELETE/WAL fixtures.
+
+Design reference: [etcd API guarantees](https://etcd.io/docs/v3.6/learning/api_guarantees/)
+distinguishes linearizable reads, potentially stale serializable reads and watch
+semantics. Those service guarantees motivate separating content identity from
+currentness; they are not implemented or inherited by this offline comparator.
