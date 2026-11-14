@@ -118,3 +118,86 @@ old snapshots, unchanged original notes/database bytes, unchanged JSON input,
 and identical fresh-process results. Their execution status belongs in the PR
 checks; the existence of tests alone is not a passing result. There is no CLI,
 archive adapter, content removal, restore gate, or destructive migration.
+
+## Deterministic binding of declared history content
+
+`lumina_orion.history_binding.bind_removal_history(profile, payload)` accepts
+strict UTF-8 `bytes` of at most 1 MiB, normalizes the declaration below and returns
+exactly `version: 1`, `scheme: lumina-removal-history-sha256-v1`, `profile`,
+`history_boundary` and `history_sha256`. It performs no file/database/network I/O.
+It identifies declared content, not independently current or complete history.
+The following values and digest are invented:
+
+```json
+{
+  "version": 1,
+  "profile": "orion",
+  "history_boundary": "fixture:A",
+  "requests": [{
+    "version": 1,
+    "profile": "orion",
+    "request_id": "fixture:r1",
+    "target_key": "fixture:target",
+    "content_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "state": "requested"
+  }]
+}
+```
+
+Every object accepts exactly the shown fields. Envelope and request versions are
+integer 1 (not booleans); request state is exactly `requested`. All profiles must
+match the selected known profile after normalization; mixed envelopes fail rather
+than filter. Boundary and request IDs are nonempty control-free identities of at
+most 200 characters, target keys at most 2,000, with edge whitespace stripped.
+Digests are lowercase 64-character SHA-256 hex; underlying content is not hashed.
+At most 10,000 requests are accepted, additionally constrained by the byte limit.
+An empty list is allowed and does not assert absence of unlisted requests.
+
+Request IDs must be unique after normalization. Requests are sorted by request ID
+before hashing: they form a declared set, not insertion chronology or an event
+stream. Reordering requests, object fields, whitespace, equivalent escapes and
+profile case do not change the binding. Other case and Unicode scalar sequences
+remain significant; no Unicode normalization occurs. This deliberately differs
+from the snapshot manifest scheme, whose array ordering remains significant.
+Unknown fields, duplicate JSON members, UTF-16/32 or BOMs, invalid UTF-8, unpaired
+surrogates, fractional/exponent/nonfinite numbers, trailing JSON and excessive
+parser nesting fail with `ValueError`. The input contract is bounded, not a
+hostile-input sandbox.
+
+The exact preimage is ASCII `lumina-removal-history-sha256-v1`, one NUL byte, then
+ASCII `json.dumps(normalized_history, sort_keys=True, ensure_ascii=True,
+separators=(",", ":"), allow_nan=False)` with no final newline. Hash it with SHA-256.
+This project-specific scheme is not JCS or a raw-file checksum. A changed boundary,
+profile, request identity, target, content digest, addition or omission changes
+the binding. Changing these rules requires a new scheme identifier.
+
+`require_history_binding(profile, payload, expected)` validates the exact five-field
+expected binding and returns detached normalized history only on equality;
+otherwise it raises `ValueError`. Select and retain `expected` independently.
+Recomputing it from the candidate, or replacing both inputs, defeats the check.
+The returned declaration is not a success/permission report. It has no authority,
+freshness, approval or reopening claim, and it does not upgrade the separate
+history-observation comparator. Existing observation schemas remain unchanged.
+
+This API neither extracts a ledger nor stores a binding. Full ledger exports
+contain extra local ID/time fields and must not be passed as this declaration.
+A future adapter must define its explicit projection and coverage. No export is
+automatically projected, no private paths/text/reviewer narratives are required,
+and no metadata retention policy is introduced. Allowed identifiers/digests may
+remain linkable. A history boundary label alone establishes neither chronology
+nor provenance. Equal old declarations can still match while newer requests are
+missing; a retained hash cannot reconstruct expired explanatory material.
+
+Tests use invented fixtures for exact preimage, normalization, request-set order,
+field changes, malformed/ambiguous JSON, input bounds, detached outputs, all five
+profile scopes and expected-binding conflicts. Two fresh-process comparisons per
+profile in DELETE/WAL fixtures preserve saved binding files, original note exports
+and database bytes. The replay/omission negative control deliberately matches
+when both inputs are replaced; it does not demonstrate rollback resistance.
+No registry, live authority, note adapter, removal, restore gate, schema migration,
+cryptographic authentication or action transaction is implemented.
+
+Design references: [RFC 8259 section 4](https://www.rfc-editor.org/rfc/rfc8259.html#section-4)
+describes duplicate-member interoperability risks; [RFC 9334 section 10.4](https://www.rfc-editor.org/rfc/rfc9334.html#section-10.4)
+explains why even newly signed claims can contain older values. Our binding scheme
+is an original local design and inherits no attestation guarantees.
