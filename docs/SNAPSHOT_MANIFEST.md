@@ -225,3 +225,53 @@ Design reference: [etcd API guarantees](https://etcd.io/docs/v3.6/learning/api_g
 distinguishes linearizable reads, potentially stale serializable reads and watch
 semantics. Those service guarantees motivate separating content identity from
 currentness; they are not implemented or inherited by this offline comparator.
+
+## Combined bound declaration inspection
+
+`inspect_bound_restore(profile, snapshot_payload, expected_snapshot, *,
+history_payload=None, expected_history=None)` in `lumina_orion.bound_restore`
+composes the existing strict snapshot and removal-history binding checks with
+`inspect_restore`. It reads supplied UTF-8 JSON bytes only, performs no I/O,
+stores nothing and takes no action. Select both expected bindings separately
+from the candidate declarations; recomputing them from an untrusted candidate
+does not provide an independent check. Existing schemas and binding schemes
+remain unchanged. See [the history declaration contract](REMOVAL_INTENTS.md).
+
+The snapshot binding is always required. Supply both history arguments together
+or omit both. Malformed JSON/schema/binding inputs, cross-profile declarations,
+and conflicting non-null boundary labels raise `ValueError`. A valid history
+binding is checked even when the snapshot boundary is unspecified. This avoids
+hiding a conflicting binding behind an unresolved status.
+
+| comparison_status | Meaning of findings |
+| --- | --- |
+| `history_missing` | `None`: no history comparison was performed. |
+| `snapshot_boundary_unspecified` | `None`: supplied history matched its binding, but the snapshot has no boundary to associate with it. |
+| `bound_declarations_compared` | A list of the existing comparison findings, including an empty list when the supplied history contains no requests. |
+
+The report identifies `profile`, `snapshot_id`, `snapshot_binding`,
+`history_binding` (or `None`) and `snapshot_history_boundary`. It retains the
+normalized `declared_coverage` including exclusions. Its other fields are
+`version` (1), `read_only` (`True`), `comparison_status`, `findings`,
+`coverage` (`caller_supplied_only`), `authority` (`caller_asserted_only`),
+`freshness` (`not_assessed`) and `reopening` (`not_assessed`). All nested results
+are detached from inputs. No boolean approval or clearance field is emitted.
+
+A `requested_version_present` finding means a requested version is **listed in
+this declaration**, not removed or independently found in a database. Other
+outcomes remain `ambiguous_match`, `different_version_listed` and
+`target_not_listed`. An absent target is not proof of erasure. Even matching
+boundary labels, two matching bindings, an empty result and `declared_complete`
+never establish completeness, source authenticity, current history or permission
+to restore. Boundary labels have no chronological ordering here. The separate
+history-observation API is neither invoked nor upgraded to trusted authority.
+
+Tests retain a negative control that replaces both incomplete declarations and
+their expected bindings: comparison still succeeds while every authority limit
+remains explicit. Other tests cover conflict rejection, all comparison outcomes,
+missing history, unspecified boundaries, detached results, all five profile
+scopes, repeatable fresh-process reports and unchanged fixture files/original
+notes in DELETE and WAL databases. These are invented fixtures; the inspector
+never opens those databases. No actual-note adapter, trusted history source,
+action transaction, retention policy or power-loss protection is implemented.
+Recompute inspection on retry; do not use a saved report as an authorization token.
