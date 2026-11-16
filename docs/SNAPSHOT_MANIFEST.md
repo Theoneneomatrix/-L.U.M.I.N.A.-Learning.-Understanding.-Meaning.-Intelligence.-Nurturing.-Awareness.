@@ -275,3 +275,62 @@ notes in DELETE and WAL databases. These are invented fixtures; the inspector
 never opens those databases. No actual-note adapter, trusted history source,
 action transaction, retention policy or power-loss protection is implemented.
 Recompute inspection on retry; do not use a saved report as an authorization token.
+
+## Fixture export projection
+
+`project_fixture_declarations(profile, memory_export, saved_intents, mappings, *,
+snapshot_id, history_boundary)` in `lumina_orion.fixture_projection` is a pure,
+fixture-only bridge to the existing declaration schemas. It accepts already
+supplied `MemoryBank.export(profile)` and `RemovalIntentLedger.intents(profile)`
+values, never a path or database handle. It makes no reads, writes or API calls.
+It returns only detached `snapshot` and `history` declarations, not expected
+bindings or permission. Existing binding and inspection APIs can process them.
+
+Every supplied note requires exactly one explicit mapping:
+
+```json
+{"note_id": 1, "record_key": "fixture:note1", "target_key": "fixture:target", "content_sha256": "<64 lowercase SHA-256 hex characters>"}
+```
+
+`note_id` is a positive integer in the supplied export. `record_key` identifies
+the declared copy record; `target_key` states which removal target it represents.
+Identities use the existing normalization and bounds. No target is guessed from
+note text, source references, ordering, similar labels or local IDs. The supplied
+digest must equal SHA-256 of the exact UTF-8 note text, without trimming or
+Unicode normalization. This fixture convention hashes **text only**: metadata,
+source, timestamps, dependency links and review status are not covered. Existing
+removal requests must already use the same text-digest convention to match.
+Equal text alone does not identify a note or validate a target assignment.
+
+Missing/extra mappings, duplicate note IDs, repeated mappings, duplicate record
+keys and duplicate `(target_key, content_sha256)` assignments raise `ValueError`.
+Different text versions may share a target if their record keys differ. Foreign
+profiles are rejected rather than filtered out. Notes require `id`, `profile`
+and `text`; other export note fields are deliberately not projected or validated.
+The export envelope has exactly `format`, `profile`, `records` and `results`.
+The format must be `lumina-memory-v1`; lists are bounded to 10,000 entries and
+note text to 20,000 characters. Snapshot/history strict Unicode and 1 MiB encoded
+declaration limits also apply. Validation errors omit source text.
+
+Saved intent rows require the existing eight export fields, including positive
+local `id` and nonempty `created_at`. The output retains the six v1 request fields
+and discards local ID/time. A timestamp is not evaluated as freshness or ordering.
+Snapshot records sort by normalized record key; history requests use the existing
+request-ID sorting. Caller-supplied snapshot identity and history boundary label
+remain assertions. Their equality is not proof of a consistent database capture.
+
+Coverage is always `partial`, with the fixed exclusion
+`fixture:research-results-and-untracked-copies`, even when the supplied lists are
+empty. Research results and untracked copies are not mapped. The adapter requires
+coverage of all **supplied** notes; it cannot detect notes or requests omitted
+before invocation, authenticate input provenance, or ensure that separate exports
+came from the same read snapshot. It does not validate source metadata, revoke
+requests, remove notes, pause retention, authorize restore, or integrate archives.
+
+Tests use invented data, including actual temporary journal/ledger exports.
+They cover all five profiles, text changes under reused IDs, Unicode byte
+differences, missing/ambiguous mappings, schema/resource failures, shared-target
+versions, detached values, empty-input and metadata negative controls, and two
+fresh-process projections per profile in DELETE/WAL fixtures. Saved fixture bytes,
+original notes and removal requests remain unchanged. These are process-restart
+checks of a pure projection, not power-loss or concurrent-capture guarantees.
