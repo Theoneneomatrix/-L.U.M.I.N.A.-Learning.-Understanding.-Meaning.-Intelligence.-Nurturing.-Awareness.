@@ -334,3 +334,36 @@ versions, detached values, empty-input and metadata negative controls, and two
 fresh-process projections per profile in DELETE/WAL fixtures. Saved fixture bytes,
 original notes and removal requests remain unchanged. These are process-restart
 checks of a pure projection, not power-loss or concurrent-capture guarantees.
+
+## Common read snapshot fixture
+
+`tests/test_capture_consistency.py` adds a test-only capture experiment using the
+existing note and request row serializers on one connection with an explicit
+`BEGIN`. The first note query fixes the read snapshot; the request query runs
+before that transaction ends. No production capture API is added, and separate
+calls to `MemoryBank.export` and `RemovalIntentLedger.intents` remain separate
+reads. Identical boundary labels cannot join their transaction histories.
+
+The competing writer inserts an invented note and its removal request in one
+transaction. In DELETE mode its first commit returns `SQLITE_BUSY` while the
+reader holds the snapshot; after the reader closes, the retained write
+transaction commits. In WAL mode the writer commits while the reader is active,
+and that reader still captures the original note/request pair. Fresh reads then
+see both additions. Coordination uses a queue and event with bounded waits,
+without timing sleeps. All five profiles run in both modes.
+
+The negative control ends the note export, commits the same writer transaction,
+then reads requests. The projection accepts these individually valid inputs,
+but its new request has `target_not_listed`: this mixed capture is not evidence
+of removal. Both controls retain partial, caller-supplied coverage and unassessed
+freshness and reopening. A consistent old snapshot is not current authority.
+
+Two fresh processes per case re-inspect the saved capture and read the temporary
+database. Saved capture bytes, original notes and requests (including IDs and
+provenance), and other profiles remain unchanged; only the selected profile gets
+the intentional additions. These are fixture tests of process restart and
+concurrent capture, not rollback protection, trusted provenance, source-metadata
+binding, complete archive coverage, power-loss safety or permission to act.
+
+SQLite documents [historic read snapshots and WAL isolation](https://www.sqlite.org/isolation.html)
+and [retrying a busy commit while its transaction remains active](https://www.sqlite.org/lang_transaction.html).
