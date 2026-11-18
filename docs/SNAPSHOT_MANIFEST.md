@@ -367,3 +367,51 @@ binding, complete archive coverage, power-loss safety or permission to act.
 
 SQLite documents [historic read snapshots and WAL isolation](https://www.sqlite.org/isolation.html)
 and [retrying a busy commit while its transaction remains active](https://www.sqlite.org/lang_transaction.html).
+
+## Read only co located capture
+
+`lumina_orion.capture.capture_journal(path, profile)` now reads an existing local
+database containing both the journal and removal-request ledger. It returns a
+detached version 1 dictionary with `profile`, `memory_export`, `saved_intents`,
+`consistency: single_read_transaction`, `coverage: partial`,
+`freshness: not_assessed` and `authority: not_assessed`.
+
+The profile is normalized and validated before opening the file. An escaped
+absolute file URI uses SQLite `mode=ro` and a private connection cache; caller
+paths are ordinary paths, not configuration URIs. The connection starts an
+explicit `BEGIN` before checking required tables and reading notes (including
+originals, dependencies and review flags), saved research results and removal
+requests. It closes on success or error. No MemoryBank or ledger constructor is
+invoked, so missing files or tables are not initialized. Missing tables raise
+`ValueError`; invalid profiles also raise `ValueError`. Missing/unreadable files,
+lock failures and incompatible/corrupt schemas raise SQLite errors. No partial
+result is returned on failure. Table presence is not a full schema audit.
+
+All four tables (`memories`, `dependencies`, `research_results`,
+`removal_intents`) must be in the same database. A ledger in another file is not
+discovered or attached. Empty co-located tables can yield empty lists, still
+with partial coverage; a missing ledger is an error rather than an empty list.
+The helper does not write an export file or add capture timestamps. Stored
+timestamps retain their original meanings and are not assessed for currentness.
+
+This is a consistent read of the selected database, not complete archive
+coverage or authenticated provenance. Explicit target mappings, text-only
+fixture projection and expected bindings remain separate operations. No result
+confirms removal, pauses retention or authorizes reopening. The earlier
+separate-read negative control remains in the tests: calling the two older
+export methods separately still does not provide a shared snapshot.
+
+SQLite's [URI documentation](https://www.sqlite.org/uri.html) describes read-only
+mode and warns that `immutable=1` skips change detection; this helper does not
+assert immutability. Its [WAL documentation](https://www.sqlite.org/wal.html#read_only_databases)
+explains that read-only WAL access can require existing or creatable `-wal` and
+`-shm` coordination files. Read-only here means no journal/ledger SQL changes,
+not a promise of zero filesystem side effects or a forensic acquisition tool.
+
+Tests use invented temporary databases in DELETE/WAL modes for all five
+profiles, preserve originals and other profiles during a competing writer,
+verify saved results and review flags, and run two fresh-process captures per
+profile/mode. They also verify detached values, escaped paths, missing files
+and tables, SQL write rejection, connection cleanup after failure, and empty
+versus unavailable ledgers. Production capture still does not establish current
+authority, source-metadata binding, rollback protection or power-loss safety.
