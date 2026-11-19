@@ -415,3 +415,61 @@ profile/mode. They also verify detached values, escaped paths, missing files
 and tables, SQL write rejection, connection cleanup after failure, and empty
 versus unavailable ledgers. Production capture still does not establish current
 authority, source-metadata binding, rollback protection or power-loss safety.
+
+## Captured note metadata binding
+
+`bind_captured_note(profile, note)` and
+`require_note_binding(profile, note, expected)` in `lumina_orion.note_binding`
+are pure offline functions for one supplied `capture_journal` note. They do not
+open a file or change capture, export, projection, removal-request or snapshot
+schemas. Select and retain the expected binding independently. Verification
+returns a detached note or raises `ValueError`; malformed input also fails.
+
+The v1 note schema requires exactly `id`, `profile`, `kind`, `text`, `source`,
+`created_at`, `supersedes`, `derived_from`, `needs_review`, and `review_status`.
+Missing and extra fields fail rather than silently dropping future metadata.
+IDs are positive SQLite integers (booleans excluded); dependency lists contain
+at most 100 unique IDs and cannot include the note itself. Text/source/time
+fields are nonempty Unicode scalar strings bounded to 20,000/2,000/200
+characters. Timestamps are opaque recorded strings, not validated dates.
+Kinds and correction links follow the existing journal shape. Review markers
+are validated for shape and local consistency, not recomputed against a graph.
+Links do not prove that the referenced records exist or belong to this profile.
+The supplied note's profile must be canonical and match the normalized caller
+profile. Profile scoping is not access control.
+
+Every listed field is hashed. Text, whitespace, Unicode sequences, recorded
+timestamps and dependency order are preserved exactly; dictionary key order is
+ignored. The encoding is Python JSON with sorted keys, `ensure_ascii=True`,
+compact separators and `allow_nan=False`, limited to 256 KiB of ASCII bytes.
+SHA-256 input is `b"lumina-captured-note-sha256-v1\x00"` followed by those bytes.
+This project-specific scheme is not JCS. The binding has exactly `version: 1`,
+`scheme: lumina-captured-note-sha256-v1`, `profile`, `note_id` and `note_sha256`.
+It contains no source text but identifiers and hashes can still be linkable.
+
+This is a separate metadata-inclusive scheme. Existing v1 removal-request
+`content_sha256` remains SHA-256 of exact UTF-8 text only. Never substitute
+`note_sha256` for that digest. Review flags can legitimately change when a new
+correction arrives; a binding conflict does not diagnose corruption or decide
+which assertion is true. Local IDs do not establish cross-database identity.
+Saved research results, requests, external source contents, capture identity,
+coverage and observation time are outside this per-note binding.
+
+A match does not authenticate provenance, establish currentness or authority,
+validate a source claim, discover untracked copies, authorize deletion or
+reopening, or change retention. Replacing both the candidate and expected
+binding bypasses the comparison; tests preserve that negative control. No
+registry, automatic acceptance, migration or action adapter is added.
+
+Tests cover a literal encoding vector, metadata-only and text changes, Unicode,
+malformed fields, byte bounds, profile separation, detached output and the
+unchanged v1 text digest. Invented DELETE/WAL fixtures run two fresh-process
+comparisons per profile while preserving all database bytes and originals.
+These checks establish restart determinism, not trusted storage or power-loss
+safety. Next integration work must explicitly associate bindings with capture
+and record identities without interpreting matches as permission.
+
+Design references: [Python JSON encoder controls](https://docs.python.org/3/library/json.html)
+and [RFC 8259 section 8.2](https://www.rfc-editor.org/rfc/rfc8259.html#section-8.2)
+(on unpredictable handling of unpaired surrogates). The schema, encoding and
+trust limits here are project design choices, not guarantees inherited from JSON.
