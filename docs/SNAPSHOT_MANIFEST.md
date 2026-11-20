@@ -473,3 +473,74 @@ Design references: [Python JSON encoder controls](https://docs.python.org/3/libr
 and [RFC 8259 section 8.2](https://www.rfc-editor.org/rfc/rfc8259.html#section-8.2)
 (on unpredictable handling of unpaired surrogates). The schema, encoding and
 trust limits here are project design choices, not guarantees inherited from JSON.
+
+## Declared capture note envelope
+
+`bind_capture_notes(profile, capture, *, capture_id)` and
+`require_capture_note_binding(profile, capture, expected, *, capture_id)` in
+`lumina_orion.capture_binding` associate the **supplied note set** with a
+caller-declared capture identity. Both are pure functions; neither opens the
+journal, writes a registry, runs a check nor changes an existing schema. Use
+`capture_journal` separately to obtain a capture. An input shaped like a capture
+is still an assertion, not proof that this function performed its transaction.
+
+The input requires exactly the current eight capture fields. Version must be
+integer 1; canonical profile must match the normalized caller profile;
+consistency/coverage/freshness/authority must retain the v1 values
+`single_read_transaction`, `partial`, `not_assessed`, `not_assessed`. The export
+requires exactly format/profile/records/results with `lumina-memory-v1` and the
+same profile. Records, results and saved_intents must be lists of at most 10,000
+rows. Only note rows receive content validation and hashing, using the existing
+captured-note binding. Results and request row contents are deliberately unbound
+and unvalidated. They never appear in verification output.
+
+`capture_id` uses the existing nonempty control-free identity rules, is trimmed,
+is bounded to 200 characters and must contain Unicode scalar values. It is not
+an inferred path, trusted database identity, timestamp or chronological counter.
+The envelope contains exactly version (1), scheme
+`lumina-capture-notes-sha256-v1`, profile, capture_id, note_bindings and
+notes_sha256. Each note association is an existing five-field v1 note binding.
+Associations sort by positive local note ID; input note ordering is irrelevant.
+Repeated IDs and foreign-profile rows/bindings fail. Empty supplied notes are
+valid and do not imply that an archive is empty.
+
+The envelope digest uses ASCII JSON with sorted keys, compact separators,
+`ensure_ascii=True`, `allow_nan=False`, without the notes_sha256 field. Prefix
+those bytes with `b"lumina-capture-notes-sha256-v1\x00"` and hash with SHA-256.
+The encoded body is limited to 1 MiB in addition to per-note and row bounds.
+This is a project-specific scheme, not JCS. It covers the capture label, profile
+and exact set of note bindings. It does not cover full capture bytes, results,
+requests, external source content or observational provenance.
+
+Choose and retain the expected envelope independently. Verification validates
+its exact schema, canonical sorted form and digest, then compares the candidate
+note envelope with it. A missing/extra note, reused ID with changed metadata,
+foreign profile, changed association or different capture label raises
+`ValueError`. Success returns only detached validated notes sorted by ID, never
+a full capture decorated as verified. Identifiers and digests remain linkable;
+the absence of note text in the envelope is not anonymity or a retention policy.
+
+Omitting a note before creating both candidate and expected envelopes remains
+undetectable. Replacing both envelopes also bypasses the check. A caller can
+assert a false capture label or copy valid notes from another database using
+that label. A match cannot prove origin, complete coverage, a common snapshot,
+current authority, graph truth, safe reopening, removal or permission. Local
+IDs remain scoped assertions, not global identities. Nothing locks a separately
+stored witness or orders a later action. Existing capture, projection and v1
+text-only removal digests remain unchanged.
+
+Six test methods cover a literal empty encoding vector, reordered inputs,
+changed capture identity, missing/extra/duplicate notes, reused IDs, cross-profile
+associations, malformed envelopes, resource limits and detached values. Explicit
+negative controls retain unbound request/result changes and replacement or
+omission of both candidate and expected inputs. Invented DELETE/WAL fixtures
+verify twice in fresh processes for all five profiles; original database bytes,
+notes, results, requests and older bindings remain unchanged. These process
+checks do not establish power-loss safety or trusted storage.
+
+Design references: [W3C PROV-DM collections and membership](https://www.w3.org/TR/prov-dm/#term-collection)
+distinguishes collection provenance from member provenance; [Python JSON encoder
+controls](https://docs.python.org/3.12/library/json.html) document key sorting and
+encoding settings. This envelope is not an implementation of PROV or its trust
+semantics. Its exact-set comparison is a separate project choice; PROV membership
+assertions alone need not describe a complete set.
