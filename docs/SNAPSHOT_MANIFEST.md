@@ -544,3 +544,61 @@ controls](https://docs.python.org/3.12/library/json.html) document key sorting a
 encoding settings. This envelope is not an implementation of PROV or its trust
 semantics. Its exact-set comparison is a separate project choice; PROV membership
 assertions alone need not describe a complete set.
+
+## Declared capture request envelope
+
+The pure functions `bind_capture_requests(profile, capture, *, capture_id)` and
+`require_capture_request_binding(profile, capture, expected, *, capture_id)`
+in `lumina_orion.request_binding` bind exactly the supplied removal-request rows
+to a declared capture ID and canonical profile. They perform no I/O and return
+no verified notes or results. The shared v1 capture shape and list bounds are
+checked, but note/result contents remain outside this binding.
+
+Each request has exactly id, version, profile, request_id, target_key,
+content_sha256, created_at and state. IDs are positive SQLite integers; version
+is integer 1; profile must match; state is exactly `requested`. Request and
+target identities must already be trimmed, control-free Unicode scalar text,
+bounded to 200 and 2,000 characters. Recorded created_at text is preserved,
+nonempty, scalar and bounded to 200 characters, not interpreted as a clock.
+The existing lowercase v1 content_sha256 remains exact UTF-8 text hashing;
+the new envelope digest must never replace it. Duplicate local IDs or request
+IDs fail, even when the other identity differs. Multiple distinct requests for
+one target remain valid.
+
+The envelope contains exactly version (1), scheme
+`lumina-capture-requests-sha256-v1`, profile, capture_id, requests and
+requests_sha256. Capture identity follows the existing trimmed 200-character
+scalar identity contract. Request rows sort by local ID; input row and key
+order do not matter. All eight request fields, capture identity and profile are
+covered. Encode the envelope without requests_sha256 as sorted-key ASCII JSON
+with ensure_ascii=True, compact separators and allow_nan=False, bounded to
+1 MiB and 10,000 rows. Hash prefix
+`b"lumina-capture-requests-sha256-v1\\x00"` plus those bytes using SHA-256.
+This is a project-specific scheme, not JCS.
+
+Verification checks the independently retained expected envelope's exact shape,
+canonical sorted form and digest, then compares the candidate. Missing, extra,
+changed, duplicate or foreign-profile requests and capture-label changes fail
+with ValueError. Success returns detached request rows sorted by ID. These are
+requests, **not completion receipts or authorization**. Empty rows do not prove
+no request exists elsewhere. Local IDs and capture labels do not prove global
+identity. Identifiers, target keys and digests remain potentially sensitive.
+
+Replacing both candidate and expected, or omitting requests before constructing
+both, still passes. Notes/results and external source contents remain unbound.
+There is no authenticated provenance, common-snapshot proof, current authority,
+rollback resistance, complete history, action ordering, removal, reopening or
+retention policy. Existing schemas, capture behavior and note envelopes are
+unchanged.
+
+Six test methods exercise encoding, exact field changes, Unicode, identity/set
+conflicts, malformed inputs, bounds, detached values and trust negative controls.
+The restart fixture compares twice in fresh processes for all five profiles in
+DELETE/WAL modes and checks original database bytes, all rows and existing
+text-only digests. Test execution status belongs in the PR; the presence of
+these tests does not establish that they passed.
+
+Design references: [Python JSON encoder controls](https://docs.python.org/3.12/library/json.html)
+and [W3C PROV-DM collections](https://www.w3.org/TR/prov-dm/#term-collection).
+Collection/member provenance motivates recording associations; exact-set
+comparison and the digest contract are project design decisions.
