@@ -573,7 +573,7 @@ order do not matter. All eight request fields, capture identity and profile are
 covered. Encode the envelope without requests_sha256 as sorted-key ASCII JSON
 with ensure_ascii=True, compact separators and allow_nan=False, bounded to
 1 MiB and 10,000 rows. Hash prefix
-`b"lumina-capture-requests-sha256-v1\\x00"` plus those bytes using SHA-256.
+`b"lumina-capture-requests-sha256-v1\x00"` plus those bytes using SHA-256.
 This is a project-specific scheme, not JCS.
 
 Verification checks the independently retained expected envelope's exact shape,
