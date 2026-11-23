@@ -602,3 +602,64 @@ Design references: [Python JSON encoder controls](https://docs.python.org/3.12/l
 and [W3C PROV-DM collections](https://www.w3.org/TR/prov-dm/#term-collection).
 Collection/member provenance motivates recording associations; exact-set
 comparison and the digest contract are project design decisions.
+
+## Declared capture result envelope
+
+The pure functions `bind_capture_results(profile, capture, *, capture_id)` and
+`require_capture_result_binding(profile, capture, expected, *, capture_id)` in
+`lumina_orion.result_binding` bind exactly the supplied saved research-result
+rows to a declared capture ID and profile. They perform no I/O. The shared v1
+capture shape and list bounds are checked; note and request contents remain
+unbound. Existing note/request envelopes and capture behavior are unchanged.
+
+Each exported result has exactly profile, run_id, step, manifest_sha256,
+result_text, created_at and manifest. Profile must match. Run ID and step are
+nonempty Unicode scalar text bounded to 200 characters; result text to 20,000;
+created_at to 200. Text is preserved exactly, including whitespace, with no
+Unicode normalization. Run/step follow the saved-result API's opaque-text
+contract, not the trimmed removal-identity contract. created_at is an assertion,
+not an interpreted clock. Duplicate (run_id, step) pairs fail; different steps
+in one run and the same step in different runs are valid.
+
+The existing version 1 input manifest validator and UTF-8 manifest encoding
+are reused unchanged. The supplied lowercase manifest_sha256 must match those
+bytes. The full nested manifest, including ordered sources/processing arrays,
+is bound along with the result's other fields. Object key order is ignored;
+array order is retained. The envelope digest never replaces the input digest
+or the existing v1 text-only removal digest. No database schema is changed.
+
+The envelope has exactly version (integer 1), scheme
+`lumina-capture-results-sha256-v1`, profile, capture_id, results and
+results_sha256. Capture ID follows the existing trimmed 200-character Unicode
+scalar identity contract. Results sort by exact (run_id, step) strings. Encode
+the envelope without results_sha256 as sorted-key ASCII JSON with
+ensure_ascii=True, compact separators and allow_nan=False. Bound it to 1 MiB
+and 10,000 rows. Hash `b"lumina-capture-results-sha256-v1\x00"` plus those
+bytes using SHA-256. This is a project-specific Python encoding, not JCS or
+a portable cross-language floating-point canonicalization standard.
+
+Verification requires an independently retained expected envelope with exact
+shape, sorted canonical form and valid digest. Missing, extra, changed,
+duplicate or foreign-profile results and changed capture labels fail with
+ValueError. Success returns detached result rows sorted by run/step, including
+detached nested manifests. It does not return notes or requests as verified.
+
+This compares supplied assertions, not source truth, authentic provenance,
+common-snapshot proof, full history/coverage, current inputs, authorized reuse,
+action ordering, removal or retention policy. Replacing both inputs or omitting
+rows before constructing both still passes. Source locators/digests are not
+fetched or authenticated; result/run/capture labels are not global identities.
+Stored text and digests may be sensitive or linkable. Keep private material out
+of public repositories. No full capture/reconciliation claim follows from
+separate note, request and result envelopes.
+
+Seven test methods cover literal empty encoding, key/row order, every result
+field, nested manifest changes, Unicode, set conflicts, malformed/bounded
+inputs, detachment and explicit trust negative controls. Invented fixtures
+compare twice in fresh processes per profile in DELETE/WAL modes, checking
+original database bytes and all rows plus unchanged input/text digests.
+Execution results belong in the PR, not in an assumption that tests passed.
+
+Encoding references: [Python JSON controls](https://docs.python.org/3.12/library/json.html)
+and [hashlib byte inputs and hexadecimal digests](https://docs.python.org/3.12/library/hashlib.html).
+Field selection, sorting, versioning and domain separation are project choices.
