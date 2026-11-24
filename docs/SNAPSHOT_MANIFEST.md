@@ -663,3 +663,51 @@ Execution results belong in the PR, not in an assumption that tests passed.
 Encoding references: [Python JSON controls](https://docs.python.org/3.12/library/json.html)
 and [hashlib byte inputs and hexadecimal digests](https://docs.python.org/3.12/library/hashlib.html).
 Field selection, sorting, versioning and domain separation are project choices.
+
+## Shared declared association verification
+
+`verify_capture_bindings(profile, capture, *, capture_id, expected_notes,
+expected_requests, expected_results)` in `lumina_orion.capture_verification`
+compares all three independently retained envelopes against the same supplied
+capture, canonical profile and trimmed capture ID. It calls the existing note,
+request and result validators; every envelope must pass before a report returns.
+Missing, malformed, tampered, foreign-profile or differently labelled envelopes
+raise ValueError. Individually valid envelopes from differently labelled captures
+cannot be combined into a successful report. Changed contents under an unchanged
+label still conflict with retained bindings. Original envelope schemas, bounds,
+hashes, input manifests and text-only removal digests remain unchanged.
+
+The detached report has exactly version (integer 1), scheme
+`lumina-capture-binding-report-v1`, profile, capture_id, status, scope, coverage,
+common_snapshot, authenticity, freshness, authority, counts and bindings.
+Status is `supplied_bindings_match`; scope is `supplied_note_request_result_rows`;
+coverage is `partial`; common_snapshot is `not_proven`; authenticity, freshness
+and authority are `not_assessed`. Counts contains notes, requests and results;
+bindings contains notes_sha256, requests_sha256 and results_sha256 from the
+verified expected envelopes. There is no combined digest or newly saved binding.
+No row payload, source text, request outcome or permission is returned. Labels
+and digests can still be sensitive or linkable.
+
+All three sets may be empty and still match. That does not establish an empty
+archive or complete coverage. Replacing candidate and expected inputs together,
+or omitting rows before constructing both, remains undetectable. Separately
+assembled rows can pass when bound under the same caller-declared label; the
+negative control explicitly preserves `common_snapshot: not_proven` in this case.
+The capture's `single_read_transaction` declaration is checked as required by
+the existing validators, but is not independently authenticated. A successful
+report does not prove a common collection event, source truth, authentic origin,
+freshness, authorized reuse, complete history, action ordering or removal.
+
+The function performs no I/O, registration, database initialization, migration,
+cleanup or apply action. It adds no CLI, dependency, network or model access.
+Six test methods cover exact report fields, empty sets, mixed associations,
+foreign profiles, content conflicts, malformed inputs, detached reports and
+explicit trust negative controls. All-five-profile DELETE/WAL fixtures compare
+twice in fresh processes per profile/mode, preserving original database bytes,
+all rows and existing input/text digests. Test execution results belong in the
+PR; these descriptions alone are not passing-test evidence.
+
+[W3C PROV-DM collections](https://www.w3.org/TR/prov-dm/#term-collection)
+distinguishes collection membership from complete membership information.
+This partial-report contract is a project design choice, not PROV conformance
+or an implementation of authenticated provenance.
