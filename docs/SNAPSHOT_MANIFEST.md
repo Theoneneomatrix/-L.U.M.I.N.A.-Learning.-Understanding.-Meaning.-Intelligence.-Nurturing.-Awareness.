@@ -711,3 +711,54 @@ PR; these descriptions alone are not passing-test evidence.
 distinguishes collection membership from complete membership information.
 This partial-report contract is a project design choice, not PROV conformance
 or an implementation of authenticated provenance.
+
+## Offline capture inspection command
+
+From a checkout, the standard-library-only module reads four explicitly supplied
+local UTF-8 JSON files and prints the existing partial report:
+
+```bash
+PYTHONPATH=src python -m lumina_orion.capture_inspect \
+  --profile orion --capture-id fixture:capture \
+  --capture capture.json --notes retained-notes.json \
+  --requests retained-requests.json --results retained-results.json
+```
+
+The capture is the existing `capture_journal` export. Each retained file is its
+separate existing note, request or result envelope, saved independently before
+inspection. This command does not generate or retain envelopes. Constructing
+expected envelopes from the candidate immediately before comparison cannot
+detect replacement of both inputs. No network, model, credential, database,
+home-directory default, registration, cleanup, apply or migration is involved.
+
+Every file must contain exactly one JSON object, encoded as UTF-8 without a BOM,
+and be at most 1 MiB including whitespace. The command reads at most that limit
+plus one byte per file. This file-input ceiling is separate from existing
+envelope byte limits; a larger otherwise valid capture needs a separately
+reviewed input-bound change. Duplicate object keys at any nesting level,
+including escape-equivalent names, are rejected rather than silently keeping
+the last value. Non-finite numbers (including exponent overflow), malformed JSON,
+invalid UTF-8, invalid schemas, mixed associations and content conflicts fail.
+The bound does not promise a fixed CPU/time limit or eliminate filesystem races.
+Use ordinary local files; this is not an atomic multi-file capture operation.
+
+Exit 0 emits one JSON report only after all three comparisons pass. Exit 2 emits
+no report on rejected input; the generic verification error on stderr omits
+payloads, paths and offending key values. Argument errors also exit 2 with
+argparse usage. No output file is created; redirecting stdout is a separate
+caller action. Success is `supplied_bindings_match`, with `coverage: partial`,
+`common_snapshot: not_proven` and authenticity/freshness/authority unassessed.
+It neither reports removal success or failure nor grants action permission.
+Capture labels and report digests may be sensitive or linkable.
+
+The CLI tests include duplicate-key negative controls that ordinary `json.loads`
+would silently accept, nested escaped keys, malformed/bounded files, mixed
+envelopes, foreign profiles, changed rows, no action flags, and identical reports
+after fresh-process restarts. Synthetic DELETE/WAL fixtures cover all five
+profiles with unchanged original database bytes, rows and supplied file bytes.
+These test descriptions are not execution results.
+
+[Python JSON documentation](https://docs.python.org/3/library/json.html) describes
+`object_pairs_hook` and `parse_constant`, warns about resource consumption, and
+documents the default last-value behavior for repeated names. Rejecting these
+inputs and selecting a 1 MiB ceiling are project policy choices.
