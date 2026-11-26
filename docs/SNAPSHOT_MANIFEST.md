@@ -762,3 +762,53 @@ These test descriptions are not execution results.
 `object_pairs_hook` and `parse_constant`, warns about resource consumption, and
 documents the default last-value behavior for repeated names. Rejecting these
 inputs and selecting a 1 MiB ceiling are project policy choices.
+
+## Read-only capture export command
+
+The separate standard-library-only export module requires both an explicit
+existing database path and profile; it has no default home-directory store:
+
+```bash
+PYTHONPATH=src python -m lumina_orion.capture_export \
+  --db /explicit/path/to/synthetic-journal.sqlite3 --profile orion
+```
+
+It calls the existing `capture_journal` helper unchanged, using its read-only
+SQLite connection and single read transaction. A successful exit 0 prints one
+JSON capture to stdout, with existing record contents, attribution, review
+markers, dependencies, saved results and request rows. It does not generate a
+capture ID or envelope, register a binding, execute requests, clean up data,
+initialize a store or write an output file. Redirecting stdout is a separate
+caller action. Exports contain private payloads; do not publish real captures
+or use family archives as examples. Output is data, never commands to execute.
+
+Missing stores/directories, missing required tables, SQLite read errors, invalid
+profiles and serialization errors exit 2 without a partial JSON export. Stderr
+uses a generic export error without path, SQL or payload details. Argument errors
+also exit 2 with usage. An empty existing store can export empty lists, but a
+missing or unsupported store must not masquerade as a successful empty export.
+The helper is not a complete schema, hostile-database or provenance audit.
+
+Coverage remains partial; freshness and authority remain unassessed. Successful
+export is not authentication, complete archive coverage, a removal outcome or
+permission to act. It does not add evidence that was absent from stored records.
+SQLite may need WAL/shared-memory coordination sidecars even with a read-only
+connection. The module does not promise a side-effect-free directory or atomic
+capture of separately stored files. It does not use `immutable=1` or bypass locks.
+
+The export has no new output-size limit. The separate inspection command still
+rejects any supplied file over 1 MiB, including whitespace; not every possible
+export is therefore accepted by that command. Existing per-row/digest schemas
+and helper behavior are unchanged. No network/model/API access or dependency
+is added. The module does not import the council's API-calling CLI.
+
+Tests exercise two fresh-process exports and inspections per profile/mode in
+synthetic DELETE/WAL stores, preserving database bytes, all rows and retained
+envelope bytes. They also cover missing/corrupt/incomplete stores, empty stores,
+required arguments, unsupported action flags, read-only enforcement, no journal
+constructor calls and serialization failure without partial output. Actual
+execution results belong in the PR, not in these test descriptions.
+
+SQLite documents [URI read-only mode](https://www.sqlite.org/uri.html) and
+[read-only WAL constraints](https://www.sqlite.org/wal.html#read_only_databases).
+Those mechanisms do not establish authenticity or current action authority.
