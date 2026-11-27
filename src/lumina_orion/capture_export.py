@@ -8,6 +8,8 @@ import sys
 
 from .capture import capture_journal
 
+MAX_OUTPUT_BYTES = 1024 * 1024
+SIZE_ERROR = "Capture export failed: output exceeds 1 MiB; no capture was emitted."
 ERROR = "Capture export failed: unreadable or unsupported store, or invalid profile."
 
 
@@ -20,11 +22,14 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     try:
         capture = capture_journal(args.db, args.profile)
-        output = json.dumps(capture, sort_keys=True, ensure_ascii=True, allow_nan=False)
+        output = json.dumps(capture, sort_keys=True, ensure_ascii=True, allow_nan=False).encode("utf-8") + b"\n"
     except (OSError, sqlite3.Error, ValueError, RecursionError):
         print(ERROR, file=sys.stderr)
         return 2
-    print(output)
+    if len(output) > MAX_OUTPUT_BYTES:
+        print(SIZE_ERROR, file=sys.stderr)
+        return 2
+    sys.stdout.buffer.write(output)
     return 0
 
 
