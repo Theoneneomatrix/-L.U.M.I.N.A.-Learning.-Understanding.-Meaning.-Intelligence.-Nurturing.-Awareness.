@@ -796,9 +796,16 @@ SQLite may need WAL/shared-memory coordination sidecars even with a read-only
 connection. The module does not promise a side-effect-free directory or atomic
 capture of separately stored files. It does not use `immutable=1` or bypass locks.
 
-The export has no new output-size limit. The separate inspection command still
-rejects any supplied file over 1 MiB, including whitespace; not every possible
-export is therefore accepted by that command. Existing per-row/digest schemas
+The export emits at most 1 MiB (1,048,576 bytes) of UTF-8, including its final
+LF newline. The existing ASCII-escaped JSON format is unchanged. The full capture
+is serialized and encoded before checking this limit or writing stdout. An
+oversized capture exits 2 with a size-specific error and zero stdout bytes; it is
+never truncated, split, or silently filtered. This means export failed, not that
+the store is empty, damaged, or changed. The inspector uses the same byte ceiling.
+This output bound does not bound database reads, serialization time, or peak
+memory: the full capture and encoded output are still built in memory. Output
+stream failures after writing begins do not carry an atomic-delivery guarantee.
+Existing per-row/digest schemas
 and helper behavior are unchanged. No network/model/API access or dependency
 is added. The module does not import the council's API-calling CLI.
 
@@ -806,7 +813,10 @@ Tests exercise two fresh-process exports and inspections per profile/mode in
 synthetic DELETE/WAL stores, preserving database bytes, all rows and retained
 envelope bytes. They also cover missing/corrupt/incomplete stores, empty stores,
 required arguments, unsupported action flags, read-only enforcement, no journal
-constructor calls and serialization failure without partial output. Actual
+constructor calls and serialization failure without partial output. Real-store
+fixtures test one byte below, exactly at, and one byte above the ceiling for
+every profile in DELETE/WAL modes, including Unicode escaping, final newline,
+fresh-process retries, inspector acceptance, and unchanged store bytes/rows. Actual
 execution results belong in the PR, not in these test descriptions.
 
 SQLite documents [URI read-only mode](https://www.sqlite.org/uri.html) and
