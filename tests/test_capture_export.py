@@ -6,12 +6,14 @@ import sqlite3
 import subprocess
 import sys
 import tempfile
+import selectors
+from types import SimpleNamespace
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 
 from lumina_orion.capture import capture_journal
-from lumina_orion.capture_export import ERROR, SIZE_ERROR, MAX_OUTPUT_BYTES, main
+from lumina_orion.capture_export import ERROR, SIZE_ERROR, OUTPUT_ERROR, MAX_OUTPUT_BYTES, main
 from lumina_orion.capture_inspect import MAX_INPUT_BYTES, _read
 from lumina_orion.memory import MemoryBank, PROFILES
 from lumina_orion.removal import RemovalIntentLedger
@@ -21,8 +23,7 @@ from test_capture_verification import verify
 from test_note_binding import seed
 
 
-def run(args, *, text=True):
-    script = '''import runpy,socket,sys
+EXPORT_SCRIPT = '''import runpy,socket,sys
 def denied(*a,**k): raise AssertionError("network disabled")
 socket.socket.connect=denied
 socket.create_connection=denied
@@ -30,7 +31,10 @@ sys.modules["openai"]=None
 sys.argv=["capture_export",*sys.argv[1:]]
 runpy.run_module("lumina_orion.capture_export",run_name="__main__")
 '''
-    return subprocess.run([sys.executable, "-c", script, *args], text=text,
+
+
+def run(args, *, text=True):
+    return subprocess.run([sys.executable, "-c", EXPORT_SCRIPT, *args], text=text,
                           capture_output=True, timeout=15,
                           env=dict(os.environ, PYTHONDONTWRITEBYTECODE="1"))
 
@@ -198,3 +202,85 @@ class CaptureExportTests(unittest.TestCase):
                                 self.assertEqual(child.stderr, (SIZE_ERROR + "\n").encode("utf-8"))
                             self.assertEqual(read_all(path), rows)
                             self.assertEqual(path.read_bytes(), original)
+
+    def test_short_write_closed_stream_and_write_flush_failures(self):
+        class Sink(io.BytesIO):
+            def __init__(self, mode):
+                super().__init__(); self.mode = mode; self.calls = 0
+            def write(self, value):
+                self.calls += 1
+                if self.mode in ("write", "blocking"):
+                    super().write(value[:17])
+                    raise (BlockingIOError if self.mode == "blocking" else OSError)("private fixture path and payload")
+                if self.mode == "short":
+                    return super().write(value[:17])
+                return super().write(value)
+            def flush(self):
+                if self.mode == "flush":
+                    raise OSError("private flush details")
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory)/"journal.sqlite3"; seed(self, path, "DELETE")
+            original = path.read_bytes(); rows = read_all(path)
+            expected = json.dumps(capture_journal(path, "orion"), sort_keys=True, ensure_ascii=True, allow_nan=False).encode()+b"\n"
+            for mode in ("write", "blocking", "short", "flush", "closed"):
+                sink = Sink(mode)
+                if mode == "closed": sink.close()
+                out = SimpleNamespace(buffer=sink)
+                err = io.StringIO()
+                with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                    self.assertEqual(main(["--db", str(path), "--profile", "orion"]), 2)
+                self.assertEqual(err.getvalue(), OUTPUT_ERROR+"\n")
+                self.assertEqual(sink.calls, 1)  # No automatic retry after partial delivery.
+                if mode != "closed":
+                    self.assertEqual(sink.getvalue(), expected[:17] if mode in ("write", "blocking", "short") else expected)
+                self.assertEqual(read_all(path), rows)
+                self.assertEqual(path.read_bytes(), original)
+
+    @unittest.skipUnless(sys.platform.startswith("linux"), "Deterministic Linux pipe capacity fixture")
+    def test_real_closed_pipes_restarts_and_preservation(self):
+        import fcntl
+        with tempfile.TemporaryDirectory() as directory:
+            for mode in ("DELETE", "WAL"):
+                path = Path(directory)/(mode+".sqlite3"); seed(self, path, mode)
+                for partial in (False, True):
+                    if partial:
+                        for profile in PROFILES:
+                            MemoryBank(path).add(profile, "source_note", "x"*19000, "fixture:pipe")
+                    original = path.read_bytes(); rows = read_all(path)
+                    for profile in PROFILES:
+                        args = ["--db", str(path), "--profile", profile]
+                        expected = json.dumps(capture_journal(path, profile), sort_keys=True, ensure_ascii=True, allow_nan=False).encode()+b"\n"
+                        retained = Path(directory)/"earlier.json"; retained.write_bytes(expected)
+                        if not partial: self.assertLess(len(expected), io.DEFAULT_BUFFER_SIZE)
+                        for _ in range(2):
+                            read_fd, write_fd = os.pipe()
+                            fcntl.fcntl(write_fd, fcntl.F_SETPIPE_SZ, 4096)
+                            if partial: self.assertGreater(len(expected), 4096)
+                            else: os.close(read_fd)
+                            child = None
+                            try:
+                                child = subprocess.Popen([sys.executable, "-c", EXPORT_SCRIPT, *args],
+                                    stdout=write_fd, stderr=subprocess.PIPE,
+                                    env=dict(os.environ, PYTHONDONTWRITEBYTECODE="1"))
+                                os.close(write_fd); write_fd = None
+                                if partial:
+                                    with selectors.DefaultSelector() as selector:
+                                        selector.register(read_fd, selectors.EVENT_READ)
+                                        self.assertTrue(selector.select(5), "No output before timeout")
+                                    self.assertEqual(os.read(read_fd, 64), expected[:64])
+                                    os.close(read_fd); read_fd = None
+                                _, err = child.communicate(timeout=10)
+                                self.assertEqual(child.returncode, 2)
+                                self.assertEqual(err, (OUTPUT_ERROR+"\n").encode())
+                            finally:
+                                if write_fd is not None: os.close(write_fd)
+                                if partial and read_fd is not None: os.close(read_fd)
+                                if child is not None and child.poll() is None:
+                                    child.kill(); child.wait(timeout=5)
+                            healthy = run(args, text=False)
+                            self.assertEqual(healthy.returncode, 0, healthy.stderr)
+                            self.assertEqual(healthy.stdout, expected)
+                            self.assertEqual(healthy.stderr, b"")
+                            self.assertEqual(read_all(path), rows)
+                            self.assertEqual(path.read_bytes(), original)
+                            self.assertEqual(retained.read_bytes(), expected)
