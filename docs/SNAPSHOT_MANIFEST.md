@@ -822,3 +822,35 @@ execution results belong in the PR, not in these test descriptions.
 SQLite documents [URI read-only mode](https://www.sqlite.org/uri.html) and
 [read-only WAL constraints](https://www.sqlite.org/wal.html#read_only_databases).
 Those mechanisms do not establish authenticity or current action authority.
+
+
+### Export delivery failures
+
+The export checks the binary write count and flushes stdout before returning 0.
+A short write, OSError (including BrokenPipeError or BlockingIOError), or closed
+stream ValueError returns 2 with a generic delivery error on writable stderr.
+The error includes no path, payload or exception details. No action is retried.
+Some or even all bytes may already have reached the receiver; a failed delivery
+is not an empty store, a rollback, or proof that stored records were lost.
+
+After a stream failure, the command makes a best-effort redirection of its failed
+stdout descriptor to the null device to prevent another buffered-write error at
+interpreter shutdown. It does not change signal handlers or reopen the journal.
+Custom embedded streams without a descriptor cannot receive that cleanup. The
+CLI expects a binary stdout buffer and writable stderr. Blocking output has no
+new timeout. Flush completion does not prove downstream consumption or durable
+storage; callers must inspect the exit status and validate the received capture.
+Keep earlier saved files separate from a failed new delivery. Redirection to an
+existing file by a shell can truncate that destination before Python starts;
+this command cannot preserve a file the caller has already overwritten.
+
+Tests inject short writes, prefix-then-error, flush errors and closed streams.
+Linux real-pipe fixtures close a receiver before output or after a 64-byte
+prefix, exercise small buffered and larger writes, verify failure at shutdown,
+and retry fresh exports for all five profiles in DELETE/WAL modes. Database
+bytes, all rows and a separately retained earlier file remain unchanged. These
+are synthetic tests, not a guarantee for every platform or stream implementation.
+
+Python documents [buffered writing and flushing](https://docs.python.org/3/library/io.html#io.BufferedWriter),
+[broken pipes and shutdown flushing](https://docs.python.org/3/library/signal.html#note-on-sigpipe),
+and [shutdown flush errors changing exit status](https://docs.python.org/3/library/sys.html#sys.exit).
